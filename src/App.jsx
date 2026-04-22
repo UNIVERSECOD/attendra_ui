@@ -6,7 +6,7 @@ const staggerDelays = ["0.05s", "0.12s", "0.19s", "0.26s"];
 const employeeStepTitles = [
   "General Identity",
   "Work Information",
-  "Card, Fingerprint, Face & Photo",
+  "Card, Fingerprint & Photo",
   "Compensation",
 ];
 
@@ -84,11 +84,10 @@ const employeeBlankForm = {
   shiftType: "Standard Shift",
   group: "",
   accessGroup: "",
-  faceRecognitionStatus: "Not Enrolled",
   cardAssignment: "",
   fingerprintAssignment: "",
   salary: "",
-  bonus: "",
+  hourlyRate: "",
   allowance: "",
   notes: "",
   emergencyContact: "",
@@ -106,6 +105,9 @@ const employeeAccessLevels = [
   "Restricted Access",
   "Admin Access",
 ];
+
+const employeeDepartmentOptions = employeeDepartments.slice(1);
+const employeeGroupSelectOptions = employeeGroupOptions.slice(1);
 
 const initialDevices = [
   { id: 1, name: "Main Entrance Controller", model: "DS-K1T671TM-3XF", serial: "DS-K1T671202012345", ip: "192.168.1.64", online: true, door: "Closed", mac: "98:DF:82:8D:96:21", firmware: "V2.2.64", fwDate: "build 200903", type: "ACS", deviceId: "255" },
@@ -552,6 +554,8 @@ function App() {
     employmentStatus: "All Statuses",
     shiftType: "All Shifts",
   });
+  const [employeeSortField, setEmployeeSortField] = useState("fullName");
+  const [employeeSortDirection, setEmployeeSortDirection] = useState("asc");
 
   const selectedDevice = devices.find((device) => device.id === drawerDeviceId) ?? null;
   const selectedEmployee = employees.find((employee) => employee.id === employeeDetailId) ?? null;
@@ -559,7 +563,7 @@ function App() {
 
   const filteredEmployees = useMemo(() => {
     const search = employeeFilters.search.trim().toLowerCase();
-    return employees.filter((employee) => {
+    const matchedEmployees = employees.filter((employee) => {
       const fullName = employee.fullName.toLowerCase();
       const matchesSearch =
         !search ||
@@ -581,7 +585,24 @@ function App() {
 
       return matchesSearch && matchesDepartment && matchesStatus && matchesShift;
     });
-  }, [employeeFilters, employees]);
+
+    return [...matchedEmployees].sort((left, right) => {
+      const leftValue = getEmployeeSortValue(left, employeeSortField);
+      const rightValue = getEmployeeSortValue(right, employeeSortField);
+
+      let compareResult = 0;
+      if (typeof leftValue === "number" && typeof rightValue === "number") {
+        compareResult = leftValue - rightValue;
+      } else {
+        compareResult = String(leftValue).localeCompare(String(rightValue), undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+      }
+
+      return employeeSortDirection === "asc" ? compareResult : compareResult * -1;
+    });
+  }, [employeeFilters, employeeSortDirection, employeeSortField, employees]);
 
   const employeeStats = useMemo(
     () => ({
@@ -751,6 +772,7 @@ function App() {
       "internalId",
       "firstName",
       "lastName",
+      "email",
       "fatherName",
       "fin",
       "serialNumber",
@@ -765,6 +787,7 @@ function App() {
       "shiftType",
       "group",
       "salary",
+      "hourlyRate",
     ];
 
     if (requiredFields.some((field) => !String(employeeFormValues[field]).trim())) {
@@ -802,6 +825,7 @@ function App() {
       "internalId",
       "firstName",
       "lastName",
+      "email",
       "fatherName",
       "fin",
       "serialNumber",
@@ -863,18 +887,28 @@ function App() {
               currentPage={employeePage}
               setCurrentPage={setEmployeePage}
               stats={employeeStats}
-                view={employeeView}
-                wizardStep={employeeWizardStep}
-                setWizardStep={setEmployeeWizardStep}
-                visitedSteps={employeeVisitedSteps}
-                setVisitedSteps={setEmployeeVisitedSteps}
-                onBackToList={closeEmployeeWizard}
-                onRefresh={handleEmployeeRefresh}
-                refreshing={employeeRefreshing}
-                onAddEmployee={openEmployeeCreate}
-                onOpenDetail={openEmployeeDetail}
-                onEditEmployee={openEmployeeEdit}
-                onDeleteEmployee={setDeleteEmployeeId}
+              sortField={employeeSortField}
+              sortDirection={employeeSortDirection}
+              onSort={(field) => {
+                if (field === employeeSortField) {
+                  setEmployeeSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+                } else {
+                  setEmployeeSortField(field);
+                  setEmployeeSortDirection("asc");
+                }
+              }}
+              view={employeeView}
+              wizardStep={employeeWizardStep}
+              setWizardStep={setEmployeeWizardStep}
+              visitedSteps={employeeVisitedSteps}
+              setVisitedSteps={setEmployeeVisitedSteps}
+              onBackToList={closeEmployeeWizard}
+              onRefresh={handleEmployeeRefresh}
+              refreshing={employeeRefreshing}
+              onAddEmployee={openEmployeeCreate}
+              onOpenDetail={openEmployeeDetail}
+              onEditEmployee={openEmployeeEdit}
+              onDeleteEmployee={setDeleteEmployeeId}
               editingEmployee={editingEmployee}
               formValues={employeeFormValues}
               setFormValues={setEmployeeFormValues}
@@ -1242,6 +1276,9 @@ function EmployeesPage(props) {
     currentPage,
     setCurrentPage,
     stats,
+    sortField,
+    sortDirection,
+    onSort,
     view,
     wizardStep,
     setWizardStep,
@@ -1360,37 +1397,51 @@ function EmployeesPage(props) {
 
       <div className="overflow-hidden rounded-[24px] border border-navy/[0.05] bg-white shadow-sm">
         <div className="overflow-x-auto overflow-y-hidden">
-          <div className="min-w-[2290px]">
-            <div className="grid grid-cols-[72px_90px_120px_180px_150px_150px_170px_110px_130px_150px_150px_170px_120px_120px_130px_150px] items-center gap-3 border-b border-navy/[0.05] bg-surface/70 px-5 py-4 text-[11px] font-bold uppercase tracking-[0.18em] text-navy/40">
-              <span>View</span>
+          <div className="min-w-[2130px]">
+            <div className="grid grid-cols-[120px_90px_120px_180px_150px_150px_170px_110px_130px_150px_150px_170px_120px_120px_130px] items-center gap-3 border-b border-navy/[0.05] bg-surface/70 px-5 py-4 text-[11px] font-bold uppercase tracking-[0.18em] text-navy/40">
+              <span>Actions</span>
               <span>Photo</span>
-              <span>Employee ID</span>
-              <span>Full Name</span>
-              <span>Father&apos;s Name</span>
-              <span>Department</span>
-              <span>Position</span>
-              <span>FIN</span>
-              <span>Serial Number</span>
-              <span>Start Date</span>
-              <span>Contract End</span>
-              <span>Leave Balance / Duration</span>
-              <span>Salary</span>
-              <span>Status</span>
-              <span>Shift Type</span>
-              <span>Group</span>
+              <SortableHeader label="Employee ID" field="internalId" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label="Full Name" field="fullName" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label="Father's Name" field="fatherName" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label="Department" field="department" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label="Position" field="position" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label="FIN" field="fin" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label="Serial Number" field="serialNumber" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label="Start Date" field="employmentStartDate" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label="Contract End" field="contractEndDate" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label="Leave Balance / Duration" field="annualLeaveBalance" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label="Salary" field="salary" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label="Status" field="employmentStatus" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label="Shift Type" field="shiftType" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
             </div>
 
             {visibleEmployees.map((employee) => (
               <div
                 key={employee.id}
-                className="grid grid-cols-[72px_90px_120px_180px_150px_150px_170px_110px_130px_150px_150px_170px_120px_120px_130px_150px] items-center gap-3 border-b border-navy/[0.05] px-5 py-4 text-sm text-navy last:border-b-0"
+                className="grid grid-cols-[120px_90px_120px_180px_150px_150px_170px_110px_130px_150px_150px_170px_120px_120px_130px] items-center gap-3 border-b border-navy/[0.05] px-5 py-4 text-sm text-navy last:border-b-0"
               >
-                <div>
+                <div className="flex items-center gap-2">
                   <button
                     onClick={() => onOpenDetail(employee.id)}
                     className="flex h-9 w-9 items-center justify-center rounded-xl border border-purple/20 bg-purple/10 text-purple transition hover:bg-purple hover:text-white"
+                    aria-label="View employee"
                   >
                     <EyeIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => onEditEmployee(employee.id)}
+                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-navy/10 bg-white text-navy transition hover:border-purple/20 hover:text-purple"
+                    aria-label="Edit employee"
+                  >
+                    <PencilIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => onDeleteEmployee(employee.id)}
+                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-red-200 bg-red-50 text-red-500 transition hover:bg-red-500 hover:text-white"
+                    aria-label="Delete employee"
+                  >
+                    <TrashIcon className="h-4 w-4" />
                   </button>
                 </div>
                 <div className="flex items-center gap-3">
@@ -1420,25 +1471,6 @@ function EmployeesPage(props) {
                   {employee.employmentStatus}
                 </span>
                 <span>{employee.shiftType}</span>
-                <div className="flex items-center justify-between gap-3">
-                  <span>{employee.group}</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => onEditEmployee(employee.id)}
-                      className="inline-flex items-center gap-1 rounded-xl border border-navy/10 bg-white px-3 py-2 text-xs font-semibold text-navy transition hover:border-purple/20 hover:text-purple"
-                    >
-                      <PencilIcon className="h-3.5 w-3.5" />
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => onDeleteEmployee(employee.id)}
-                      className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-500 transition hover:bg-red-500 hover:text-white"
-                    >
-                      <TrashIcon className="h-3.5 w-3.5" />
-                      Delete
-                    </button>
-                  </div>
-                </div>
               </div>
             ))}
 
@@ -1575,6 +1607,7 @@ function EmployeeWizardPage({
                   <Field label="FIN"><input value={values.fin} onChange={(e) => setField("fin", e.target.value)} placeholder="7Q8LE2D" className={fieldInputClass} /></Field>
                   <Field label="First Name"><input value={values.firstName} onChange={(e) => setField("firstName", e.target.value)} placeholder="First name" className={fieldInputClass} /></Field>
                   <Field label="Last Name"><input value={values.lastName} onChange={(e) => setField("lastName", e.target.value)} placeholder="Last name" className={fieldInputClass} /></Field>
+                  <Field label="Email"><input value={values.email} onChange={(e) => setField("email", e.target.value)} placeholder="name@attendra.az" className={fieldInputClass} /></Field>
                   <Field label="Father's Name"><input value={values.fatherName} onChange={(e) => setField("fatherName", e.target.value)} placeholder="Father's name" className={fieldInputClass} /></Field>
                   <Field label="Serial Number"><input value={values.serialNumber} onChange={(e) => setField("serialNumber", e.target.value)} placeholder="AA1234567" className={fieldInputClass} /></Field>
                   <Field label="Date of Birth"><input type="date" value={values.dateOfBirth} onChange={(e) => setField("dateOfBirth", e.target.value)} className={fieldInputClass} /></Field>
@@ -1587,7 +1620,12 @@ function EmployeeWizardPage({
                 <SectionHeading title="Employment Information" description="Define organizational placement, contract dates, and leave structure." />
                 <div className="grid grid-cols-2 gap-5">
                   <Field label="Position"><input value={values.position} onChange={(e) => setField("position", e.target.value)} placeholder="Position" className={fieldInputClass} /></Field>
-                  <Field label="Department"><input value={values.department} onChange={(e) => setField("department", e.target.value)} placeholder="Department" className={fieldInputClass} /></Field>
+                  <Field label="Department">
+                    <select value={values.department} onChange={(e) => setField("department", e.target.value)} className={fieldInputClass}>
+                      <option value="">Select Department</option>
+                      {employeeDepartmentOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </Field>
                   <Field label="Contract Number"><input value={values.contractNumber} onChange={(e) => setField("contractNumber", e.target.value)} placeholder="CNT-24040" className={fieldInputClass} /></Field>
                   <Field label="Branch / Office Location"><input value={values.branchLocation} onChange={(e) => setField("branchLocation", e.target.value)} placeholder="HQ Office" className={fieldInputClass} /></Field>
                   <Field label="Employment Start Date"><input type="date" value={values.employmentStartDate} onChange={(e) => setField("employmentStartDate", e.target.value)} className={fieldInputClass} /></Field>
@@ -1604,21 +1642,20 @@ function EmployeeWizardPage({
                       {employeeShiftOptions.slice(1).map((option) => <option key={option} value={option}>{option}</option>)}
                     </select>
                   </Field>
-                  <Field label="Group"><input value={values.group} onChange={(e) => setField("group", e.target.value)} placeholder="Operations Group" className={fieldInputClass} /></Field>
                 </div>
               </div>
             ) : null}
 
             {step === 3 ? (
               <div>
-                <SectionHeading title="Card, Fingerprint, Face & Photo" description="Kart, barmaq izi, uz tanima, access level ve employee fotosu eyni addimda tamamlanir." />
+                <SectionHeading title="Card, Fingerprint & Photo" description="Kart, barmaq izi, access level ve employee fotosu eyni addimda tamamlanir." />
                 <div className="grid grid-cols-[1.2fr_0.8fr] gap-6">
                   <div className="space-y-5">
                     <div className="rounded-2xl border border-navy/10 bg-white p-5">
                       <div className="mb-4 flex items-center justify-between gap-4">
                         <div>
-                          <div className="text-sm font-semibold text-navy">Card, Fingerprint & Face Information</div>
-                          <div className="mt-1 text-xs text-navy/45">Kart, barmaq izi, uz tanima ve access level burada idare olunur.</div>
+                          <div className="text-sm font-semibold text-navy">Access Credentials</div>
+                          <div className="mt-1 text-xs text-navy/45">Kart, barmaq izi ve access level burada idare olunur.</div>
                         </div>
                         <div className="flex items-center gap-2">
                           <button type="button" onClick={() => setField("cardAssignment", values.cardAssignment || "Assigned")} className="inline-flex items-center gap-2 rounded-xl bg-purple px-4 py-2 text-xs font-semibold text-white shadow-purple transition hover:bg-purple/90">
@@ -1641,12 +1678,6 @@ function EmployeeWizardPage({
                             {employeeAccessLevels.map((option) => <option key={option} value={option}>{option}</option>)}
                           </select>
                         </Field>
-                        <Field label="Face Recognition Status">
-                          <select value={values.faceRecognitionStatus} onChange={(e) => setField("faceRecognitionStatus", e.target.value)} className={fieldInputClass}>
-                            <option value="Enrolled">Enrolled</option>
-                            <option value="Not Enrolled">Not Enrolled</option>
-                          </select>
-                        </Field>
                       </div>
                     </div>
 
@@ -1661,7 +1692,12 @@ function EmployeeWizardPage({
                           {employeeShiftOptions.slice(1).map((option) => <option key={option} value={option}>{option}</option>)}
                         </select>
                       </Field>
-                      <Field label="Group"><input value={values.group} onChange={(e) => setField("group", e.target.value)} placeholder="Security Group" className={fieldInputClass} /></Field>
+                      <Field label="Group">
+                        <select value={values.group} onChange={(e) => setField("group", e.target.value)} className={fieldInputClass}>
+                          <option value="">Select Group</option>
+                          {employeeGroupSelectOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                      </Field>
                     </div>
                   </div>
 
@@ -1728,11 +1764,10 @@ function EmployeeWizardPage({
                 <SectionHeading title="Compensation" description="Store pay, allowances, contact information, and optional HR notes." />
                 <div className="grid grid-cols-2 gap-5">
                   <Field label="Salary"><input value={values.salary} onChange={(e) => setField("salary", e.target.value)} placeholder="3200 AZN" className={fieldInputClass} /></Field>
-                  <Field label="Optional Bonus"><input value={values.bonus} onChange={(e) => setField("bonus", e.target.value)} placeholder="500 AZN" className={fieldInputClass} /></Field>
+                  <Field label="Hourly Rate"><input value={values.hourlyRate} onChange={(e) => setField("hourlyRate", e.target.value)} placeholder="20 AZN / hour" className={fieldInputClass} /></Field>
                   <Field label="Optional Allowance"><input value={values.allowance} onChange={(e) => setField("allowance", e.target.value)} placeholder="Transport allowance" className={fieldInputClass} /></Field>
                   <Field label="Emergency Contact"><input value={values.emergencyContact} onChange={(e) => setField("emergencyContact", e.target.value)} placeholder="Name / Phone" className={fieldInputClass} /></Field>
                   <Field label="Phone Number"><input value={values.phone} onChange={(e) => setField("phone", e.target.value)} placeholder="+994 50 000 00 00" className={fieldInputClass} /></Field>
-                  <Field label="Email"><input value={values.email} onChange={(e) => setField("email", e.target.value)} placeholder="name@attendra.az" className={fieldInputClass} /></Field>
                   <Field label="Address"><input value={values.address} onChange={(e) => setField("address", e.target.value)} placeholder="Employee address" className={fieldInputClass} /></Field>
                   <Field label="Optional Notes"><textarea value={values.notes} onChange={(e) => setField("notes", e.target.value)} placeholder="Any HR notes" className={`${fieldInputClass} min-h-[110px] resize-none`} /></Field>
                 </div>
@@ -1874,13 +1909,11 @@ function EmployeeDetailModal({
                   </>
                 ) : (
                   <>
-                    <button onClick={() => setEditMode(true)} className="inline-flex items-center gap-2 rounded-xl border border-navy/10 bg-white px-4 py-2 text-xs font-semibold text-navy transition hover:border-purple/20 hover:text-purple">
-                      <PencilIcon className="h-3.5 w-3.5" />
-                      Edit
+                    <button onClick={() => setEditMode(true)} aria-label="Edit employee" className="flex h-10 w-10 items-center justify-center rounded-xl border border-navy/10 bg-white text-navy transition hover:border-purple/20 hover:text-purple">
+                      <PencilIcon className="h-4 w-4" />
                     </button>
-                    <button onClick={onDelete} className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-xs font-semibold text-red-500 transition hover:bg-red-500 hover:text-white">
-                      <TrashIcon className="h-3.5 w-3.5" />
-                      Delete
+                    <button onClick={onDelete} aria-label="Delete employee" className="flex h-10 w-10 items-center justify-center rounded-xl border border-red-200 bg-red-50 text-red-500 transition hover:bg-red-500 hover:text-white">
+                      <TrashIcon className="h-4 w-4" />
                     </button>
                   </>
                 )}
@@ -1892,7 +1925,12 @@ function EmployeeDetailModal({
             <DetailInfoCard title="Employment Information">
               {editMode ? (
                 <div className="grid grid-cols-2 gap-4">
-                  <Field label="Department"><input value={values.department} onChange={(e) => onChange((current) => ({ ...current, department: e.target.value }))} className={fieldInputClass} /></Field>
+                  <Field label="Department">
+                    <select value={values.department} onChange={(e) => onChange((current) => ({ ...current, department: e.target.value }))} className={fieldInputClass}>
+                      <option value="">Select Department</option>
+                      {employeeDepartmentOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </Field>
                   <Field label="Position"><input value={values.position} onChange={(e) => onChange((current) => ({ ...current, position: e.target.value }))} className={fieldInputClass} /></Field>
                   <Field label="Employment Status">
                     <select value={values.employmentStatus} onChange={(e) => onChange((current) => ({ ...current, employmentStatus: e.target.value }))} className={fieldInputClass}>
@@ -1904,7 +1942,6 @@ function EmployeeDetailModal({
                       {employeeShiftOptions.slice(1).map((option) => <option key={option} value={option}>{option}</option>)}
                     </select>
                   </Field>
-                  <Field label="Group"><input value={values.group} onChange={(e) => onChange((current) => ({ ...current, group: e.target.value }))} className={fieldInputClass} /></Field>
                   <Field label="Contract Number"><input value={values.contractNumber} onChange={(e) => onChange((current) => ({ ...current, contractNumber: e.target.value }))} className={fieldInputClass} /></Field>
                 </div>
               ) : (
@@ -1913,7 +1950,6 @@ function EmployeeDetailModal({
                   <KeyValueRow label="Position" value={employee.position} />
                   <KeyValueRow label="Employment Status" value={employee.employmentStatus} />
                   <KeyValueRow label="Shift Type" value={employee.shiftType} />
-                  <KeyValueRow label="Group" value={employee.group} />
                   <KeyValueRow label="Contract Number" value={employee.contractNumber} />
                   <KeyValueRow label="Employment Start Date" value={employee.employmentStartDate} />
                   <KeyValueRow label="Contract End Date" value={employee.contractEndDate} />
@@ -1921,17 +1957,11 @@ function EmployeeDetailModal({
               )}
             </DetailInfoCard>
 
-            <DetailInfoCard title="Card, Fingerprint & Face">
+            <DetailInfoCard title="Access & Security">
               {editMode ? (
                 <div className="grid grid-cols-2 gap-4">
                   <Field label="Card Assignment"><input value={values.cardAssignment} onChange={(e) => onChange((current) => ({ ...current, cardAssignment: e.target.value }))} className={fieldInputClass} /></Field>
                   <Field label="Fingerprint Assignment"><input value={values.fingerprintAssignment} onChange={(e) => onChange((current) => ({ ...current, fingerprintAssignment: e.target.value }))} className={fieldInputClass} /></Field>
-                  <Field label="Face Recognition Status">
-                    <select value={values.faceRecognitionStatus} onChange={(e) => onChange((current) => ({ ...current, faceRecognitionStatus: e.target.value }))} className={fieldInputClass}>
-                      <option value="Enrolled">Enrolled</option>
-                      <option value="Not Enrolled">Not Enrolled</option>
-                    </select>
-                  </Field>
                   <Field label="Access Level">
                     <select value={values.accessGroup} onChange={(e) => onChange((current) => ({ ...current, accessGroup: e.target.value }))} className={fieldInputClass}>
                       <option value="">Select Access Level</option>
@@ -1941,21 +1971,14 @@ function EmployeeDetailModal({
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-2 gap-3">
                     <IconStatusCard
-                      label="Card"
                       active={employee.cardAssignment === "Assigned"}
                       icon={<CardIcon className="h-5 w-5" />}
                     />
                     <IconStatusCard
-                      label="Fingerprint"
                       active={employee.fingerprintAssignment === "Assigned"}
                       icon={<FingerprintIcon className="h-5 w-5" />}
-                    />
-                    <IconStatusCard
-                      label="Face"
-                      active={employee.faceRecognitionStatus === "Enrolled"}
-                      icon={<FaceIcon className="h-5 w-5" />}
                     />
                   </div>
                   <KeyValueRow label="Access Level" value={employee.accessGroup} />
@@ -1967,7 +1990,7 @@ function EmployeeDetailModal({
               {editMode ? (
                 <div className="grid grid-cols-2 gap-4">
                   <Field label="Salary"><input value={values.salary} onChange={(e) => onChange((current) => ({ ...current, salary: e.target.value }))} className={fieldInputClass} /></Field>
-                  <Field label="Bonus"><input value={values.bonus} onChange={(e) => onChange((current) => ({ ...current, bonus: e.target.value }))} className={fieldInputClass} /></Field>
+                  <Field label="Hourly Rate"><input value={values.hourlyRate} onChange={(e) => onChange((current) => ({ ...current, hourlyRate: e.target.value }))} className={fieldInputClass} /></Field>
                   <Field label="Emergency Contact"><input value={values.emergencyContact} onChange={(e) => onChange((current) => ({ ...current, emergencyContact: e.target.value }))} className={fieldInputClass} /></Field>
                   <Field label="Branch / Office Location"><input value={values.branchLocation} onChange={(e) => onChange((current) => ({ ...current, branchLocation: e.target.value }))} className={fieldInputClass} /></Field>
                   <div className="col-span-2">
@@ -1980,7 +2003,7 @@ function EmployeeDetailModal({
               ) : (
                 <>
                   <KeyValueRow label="Salary" value={employee.salary} />
-                  <KeyValueRow label="Bonus" value={employee.bonus || "-"} />
+                  <KeyValueRow label="Hourly Rate" value={employee.hourlyRate || "-"} />
                   <KeyValueRow label="Allowance" value={employee.allowance || "-"} />
                   <KeyValueRow label="Emergency Contact" value={employee.emergencyContact || "-"} />
                   <KeyValueRow label="Branch / Office Location" value={employee.branchLocation || "-"} />
@@ -2250,6 +2273,30 @@ function DetailInfoCard({ title, children }) {
   );
 }
 
+function SortableHeader({ label, field, sortField, sortDirection, onSort }) {
+  const isActive = sortField === field;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(field)}
+      className={`inline-flex items-center gap-2 text-left text-[11px] font-bold uppercase tracking-[0.18em] transition ${
+        isActive ? "text-purple" : "text-navy/40 hover:text-purple"
+      }`}
+    >
+      <span>{label}</span>
+      {isActive ? (
+        sortDirection === "asc" ? (
+          <ChevronUpIcon className="h-3.5 w-3.5" />
+        ) : (
+          <ChevronDownIcon className="h-3.5 w-3.5" />
+        )
+      ) : (
+        <ChevronUpDownIcon className="h-3.5 w-3.5 text-navy/25" />
+      )}
+    </button>
+  );
+}
+
 function KeyValueRow({ label, value }) {
   return (
     <div className="flex items-start justify-between gap-4 border-b border-navy/[0.06] pb-3 last:border-b-0 last:pb-0">
@@ -2259,7 +2306,7 @@ function KeyValueRow({ label, value }) {
   );
 }
 
-function IconStatusCard({ label, active, icon }) {
+function IconStatusCard({ active, icon }) {
   return (
     <div className={`rounded-2xl border p-4 ${active ? "border-emerald-200 bg-emerald-50" : "border-red-100 bg-red-50"}`}>
       <div className="flex items-center justify-between">
@@ -2272,7 +2319,6 @@ function IconStatusCard({ label, active, icon }) {
           <CloseIcon className="h-4 w-4 text-red-400" />
         )}
       </div>
-      <div className="mt-3 text-sm font-semibold text-navy">{label}</div>
     </div>
   );
 }
@@ -2394,11 +2440,29 @@ function createEmployeeRecord(data) {
   return {
     ...employeeBlankForm,
     ...data,
+    hourlyRate: data.hourlyRate || data.bonus || "",
     fullName: `${data.firstName} ${data.lastName}`.trim(),
     avatar: data.photoDataUrl ? "" : getInitials(`${data.firstName} ${data.lastName}`),
     photoName: data.photoName || "",
     photoDataUrl: data.photoDataUrl || "",
   };
+}
+
+function getEmployeeSortValue(employee, field) {
+  if (field === "salary") return parseCurrency(employee.salary);
+  if (field === "annualLeaveBalance") return parseLeadingNumber(employee.annualLeaveBalance);
+  if (field === "employmentStartDate" || field === "contractEndDate") {
+    return new Date(employee[field] || "1900-01-01").getTime();
+  }
+  return employee[field] || "";
+}
+
+function parseCurrency(value) {
+  return Number.parseFloat(String(value || "").replace(/[^\d.]/g, "")) || 0;
+}
+
+function parseLeadingNumber(value) {
+  return Number.parseFloat(String(value || "").match(/[\d.]+/)?.[0] || "0") || 0;
 }
 
 function isEmployeeStepComplete(values, step) {
@@ -2407,6 +2471,7 @@ function isEmployeeStepComplete(values, step) {
       values.internalId &&
         values.firstName &&
         values.lastName &&
+        values.email &&
         values.fatherName &&
         values.fin &&
         values.serialNumber &&
@@ -2433,13 +2498,12 @@ function isEmployeeStepComplete(values, step) {
       values.cardAssignment &&
         values.fingerprintAssignment &&
         values.accessGroup &&
-        values.faceRecognitionStatus &&
         (values.photoDataUrl || values.photoName),
     );
   }
 
   if (step === 4) {
-    return Boolean(values.salary && values.phone && values.email);
+    return Boolean(values.salary && values.hourlyRate && values.phone);
   }
 
   return false;
@@ -2489,6 +2553,9 @@ function CheckIcon(props) { return <IconBase {...props}><path d="M20 6L9 17l-5-5
 function SpinnerIcon(props) { return <IconBase {...props}><path d="M21 12a9 9 0 1 1-6.2-8.56" /></IconBase>; }
 function ChevronLeftIcon(props) { return <IconBase {...props}><path d="M15 18l-6-6 6-6" /></IconBase>; }
 function ChevronRightIcon(props) { return <IconBase {...props}><path d="M9 18l6-6-6-6" /></IconBase>; }
+function ChevronUpIcon(props) { return <IconBase {...props}><path d="m18 15-6-6-6 6" /></IconBase>; }
+function ChevronDownIcon(props) { return <IconBase {...props}><path d="m6 9 6 6 6-6" /></IconBase>; }
+function ChevronUpDownIcon(props) { return <IconBase {...props}><path d="m8 9 4-4 4 4" /><path d="m16 15-4 4-4-4" /></IconBase>; }
 function CloseIcon(props) { return <IconBase {...props}><path d="M18 6L6 18M6 6l12 12" /></IconBase>; }
 function AlertCircleIcon(props) { return <IconBase {...props}><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></IconBase>; }
 function SearchIcon(props) { return <IconBase {...props}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.35-4.35" /></IconBase>; }
