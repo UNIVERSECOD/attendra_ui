@@ -1,4 +1,16 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { DataGrid, DataGridHeader, DataGridRow } from "../components/shared/DataGrid";
+import { LanguageSwitcher } from "../components/ui/LanguageSwitcher";
+import {
+  getAttendancePath,
+  getEmployeeCreatePath,
+  getEmployeeDetailPath,
+  getEmployeeEditPath,
+  getPagePath,
+} from "../constants/routes";
+import { useI18n } from "../hooks/useI18n";
+import { formatAttendanceCapture } from "../lib/dateTime";
+import { downloadCsv } from "../services/exportService";
 
 const DEVICE_PER_PAGE = 4;
 const EMPLOYEE_PER_PAGE = 12;
@@ -22,7 +34,8 @@ const sidebarItems = [
   { label: "Departments", key: "departments", icon: "users" },
   { label: "Positions", key: "positions", icon: "users" },
   { label: "Attendance", key: "attendance", icon: "calendar" },
-  { label: "TimeTable", key: "timetable", icon: "calendar" },
+  { label: "İş qrafiki", key: "timetable", icon: "calendar" },
+  { label: "İcazələr", key: "permissions", icon: "users" },
   { label: "Tabel", key: "tabel", icon: "users" },
   { label: "Devices", key: "devices", icon: "device" },
   { label: "Access Logs", key: "access", icon: "door" },
@@ -79,6 +92,22 @@ const timetableBlankForm = {
   endTime: "",
   allowedLateMinutes: "",
   allowedEarlyLeaveMinutes: "",
+};
+
+const holidayBlankForm = {
+  name: "",
+  description: "",
+  date: "",
+  applyScopes: ["company"],
+  departmentNames: [],
+  groupNames: [],
+};
+
+const permissionBlankForm = {
+  name: "",
+  description: "",
+  applyToType: "employee",
+  targetValue: "",
 };
 
 const groupBlankForm = {
@@ -214,6 +243,44 @@ const initialTimetables = [
   },
 ];
 
+const initialHolidays = [
+  {
+    id: 1,
+    name: "Novruz Bayramı",
+    description: "Bütün şirkət üzrə rəsmi bayram günü.",
+    date: "2026-03-20",
+    applyScopes: ["company"],
+    departmentNames: [],
+    groupNames: [],
+  },
+  {
+    id: 2,
+    name: "İstehsalat Günü",
+    description: "Operations departamenti və Operations Group üçün qeyri-iş günü.",
+    date: "2026-05-12",
+    applyScopes: ["department", "group"],
+    departmentNames: ["Operations"],
+    groupNames: ["Operations Group"],
+  },
+];
+
+const initialPermissions = [
+  {
+    id: 1,
+    name: "Medical Leave",
+    description: "Sick leave permission policy for individual employees.",
+    applyToType: "employee",
+    targetValue: "EMP-1001",
+  },
+  {
+    id: 2,
+    name: "Remote Permission",
+    description: "Flexible remote access rule for Support Group.",
+    applyToType: "group",
+    targetValue: "Support Group",
+  },
+];
+
 const tabelMonthDays = Array.from({ length: 31 }, (_, index) => index + 1);
 const tabelLegendItems = [
   "Q/İ - Qeyri-iş günü",
@@ -231,6 +298,27 @@ function buildTabelDays({ offDays = [], restDays = [], customCodes = {} }) {
     if (restDays.includes(day)) return "i";
     return "1";
   });
+}
+
+const correctedTabelLegendItems = [
+  "Q/İ - Qeyri-iş günü",
+  "i - İstirahət",
+  "E - Ezamiyyət",
+  "A/M - Atalıq məzuniyyəti",
+  "Ə/M - Əmək məzuniyyəti",
+  "H/T - Hərbi toplanış",
+  "Ö/M - Ödənişsiz məzuniyyət",
+  "S/M - Sosial məzuniyyət",
+  "T/M - Təhsil məzuniyyəti",
+  "AN/M - Analıq məzuniyyəti",
+];
+
+function normalizeTabelCode(value) {
+  return String(value || "")
+    .replaceAll("Q/Ä°", "Q/İ")
+    .replaceAll("Ä°", "İ")
+    .replaceAll("Ã–", "Ö")
+    .replaceAll("Æ", "Ə");
 }
 
 function createTabelRow({
@@ -1058,11 +1146,73 @@ const initialGroups = buildInitialGroupsFromEmployees(initialEmployees);
 const initialDepartments = buildInitialDepartmentsFromEmployees(initialEmployees);
 const initialPositions = buildInitialPositionsFromEmployees(initialEmployees);
 
-function App() {
-  const [activePage, setActivePage] = useState("devices");
+function createAttendanceRecord({
+  id,
+  employeeId,
+  date,
+  checkIn,
+  checkOut,
+  recognitionMethod,
+  lateMinutes = 0,
+  earlyLeaveMinutes = 0,
+  overtimeMinutes = 0,
+}) {
+  return {
+    id,
+    employeeId,
+    date,
+    checkIn,
+    checkOut,
+    recognitionMethod,
+    lateMinutes,
+    earlyLeaveMinutes,
+    overtimeMinutes,
+  };
+}
+
+const initialAttendanceRecords = [
+  createAttendanceRecord({ id: 1, employeeId: 2, date: "2026-04-26", checkIn: "10:20", checkOut: "19:05", recognitionMethod: "face", overtimeMinutes: 35 }),
+  createAttendanceRecord({ id: 2, employeeId: 5, date: "2026-04-26", checkIn: "08:45", checkOut: "17:10", recognitionMethod: "card" }),
+  createAttendanceRecord({ id: 3, employeeId: 8, date: "2026-04-26", checkIn: "11:10", checkOut: "20:40", recognitionMethod: "finger" }),
+  createAttendanceRecord({ id: 4, employeeId: 1, date: "2026-04-26", checkIn: "09:04", checkOut: "18:16", recognitionMethod: "face", overtimeMinutes: 0, lateMinutes: 0, earlyLeaveMinutes: 0 }),
+  createAttendanceRecord({ id: 5, employeeId: 3, date: "2026-04-26", checkIn: "09:00", checkOut: "18:24", recognitionMethod: "card", overtimeMinutes: 0, lateMinutes: 0, earlyLeaveMinutes: 0 }),
+  createAttendanceRecord({ id: 6, employeeId: 9, date: "2026-04-26", checkIn: "09:08", checkOut: "18:00", recognitionMethod: "finger", overtimeMinutes: 0, lateMinutes: 0, earlyLeaveMinutes: 0 }),
+  createAttendanceRecord({ id: 7, employeeId: 4, date: "2026-04-26", checkIn: "21:57", checkOut: "07:06", recognitionMethod: "face", overtimeMinutes: 0, lateMinutes: 0, earlyLeaveMinutes: 0 }),
+  createAttendanceRecord({ id: 8, employeeId: 6, date: "2026-04-26", checkIn: "22:03", checkOut: "07:14", recognitionMethod: "card", overtimeMinutes: 14, lateMinutes: 3 }),
+  createAttendanceRecord({ id: 9, employeeId: 10, date: "2026-04-26", checkIn: "08:58", checkOut: "18:11", recognitionMethod: "finger" }),
+  createAttendanceRecord({ id: 10, employeeId: 11, date: "2026-04-25", checkIn: "10:05", checkOut: "19:00", recognitionMethod: "face", lateMinutes: 5 }),
+  createAttendanceRecord({ id: 11, employeeId: 12, date: "2026-04-25", checkIn: "09:02", checkOut: "18:22", recognitionMethod: "card", overtimeMinutes: 0 }),
+  createAttendanceRecord({ id: 12, employeeId: 7, date: "2026-04-25", checkIn: "09:40", checkOut: "18:48", recognitionMethod: "face", overtimeMinutes: 48 }),
+];
+
+const deviceLogRecords = [
+  { id: 1, device: "Main Entrance Controller", area: "Main Entrance", event: "Access Granted", subject: "Zemine Zeynalova", method: "Face", timestamp: "2026-04-26 08:58" },
+  { id: 2, device: "Lobby Access Panel", area: "Lobby", event: "Access Denied", subject: "Visitor Card 112", method: "Card", timestamp: "2026-04-26 09:11" },
+  { id: 3, device: "Server Room Terminal", area: "Server Room", event: "Door Closed", subject: "System Event", method: "Device", timestamp: "2026-04-26 09:14" },
+  { id: 4, device: "Warehouse Entry", area: "Warehouse", event: "Fingerprint Match", subject: "Aysel Kerimli", method: "Fingerprint", timestamp: "2026-04-26 09:27" },
+];
+
+const systemAuditRecords = [
+  { id: 1, actor: "John Doe", action: "Updated employee profile", target: "Zemine Zeynalova", module: "Employees", timestamp: "2026-04-26 10:12" },
+  { id: 2, actor: "John Doe", action: "Created timetable", target: "Office Standard", module: "TimeTable", timestamp: "2026-04-26 10:35" },
+  { id: 3, actor: "John Doe", action: "Assigned devices to department", target: "Operations", module: "Departments", timestamp: "2026-04-26 11:08" },
+  { id: 4, actor: "John Doe", action: "Deleted position", target: "Temporary Operator", module: "Positions", timestamp: "2026-04-26 11:42" },
+];
+
+const attendanceTabs = [
+  { key: "flexible", label: "Flexible Shift" },
+  { key: "standard", label: "Standard Shift" },
+  { key: "normal", label: "Normal Shift" },
+];
+
+function AppShellPage({ route, navigate }) {
+  const { language, t } = useI18n();
+  const activePage = route?.pageKey || "devices";
 
   const [devices, setDevices] = useState(initialDevices);
   const [timetables, setTimetables] = useState(initialTimetables);
+  const [holidays, setHolidays] = useState(initialHolidays);
+  const [permissions, setPermissions] = useState(initialPermissions);
   const [groups, setGroups] = useState(initialGroups);
   const [departments, setDepartments] = useState(initialDepartments);
   const [positions, setPositions] = useState(initialPositions);
@@ -1074,6 +1224,8 @@ function App() {
   const [drawerDeviceId, setDrawerDeviceId] = useState(null);
   const [deviceFormOpen, setDeviceFormOpen] = useState(false);
   const [timetableFormOpen, setTimetableFormOpen] = useState(false);
+  const [holidayFormOpen, setHolidayFormOpen] = useState(false);
+  const [permissionFormOpen, setPermissionFormOpen] = useState(false);
   const [groupFormOpen, setGroupFormOpen] = useState(false);
   const [groupAssignOpen, setGroupAssignOpen] = useState(false);
   const [departmentFormOpen, setDepartmentFormOpen] = useState(false);
@@ -1082,17 +1234,22 @@ function App() {
   const [positionAssignOpen, setPositionAssignOpen] = useState(false);
   const [editingDeviceId, setEditingDeviceId] = useState(null);
   const [editingTimetableId, setEditingTimetableId] = useState(null);
+  const [editingHolidayId, setEditingHolidayId] = useState(null);
+  const [editingPermissionId, setEditingPermissionId] = useState(null);
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [editingDepartmentId, setEditingDepartmentId] = useState(null);
   const [editingPositionId, setEditingPositionId] = useState(null);
   const [deleteDeviceId, setDeleteDeviceId] = useState(null);
   const [deleteTimetableId, setDeleteTimetableId] = useState(null);
+  const [deleteHolidayId, setDeleteHolidayId] = useState(null);
+  const [deletePermissionId, setDeletePermissionId] = useState(null);
   const [deleteGroupId, setDeleteGroupId] = useState(null);
   const [deleteDepartmentId, setDeleteDepartmentId] = useState(null);
   const [deletePositionId, setDeletePositionId] = useState(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [deviceRefreshing, setDeviceRefreshing] = useState(false);
   const [timetableRefreshing, setTimetableRefreshing] = useState(false);
+  const [permissionRefreshing, setPermissionRefreshing] = useState(false);
   const [groupRefreshing, setGroupRefreshing] = useState(false);
   const [departmentRefreshing, setDepartmentRefreshing] = useState(false);
   const [positionRefreshing, setPositionRefreshing] = useState(false);
@@ -1102,6 +1259,8 @@ function App() {
   const [doorBusy, setDoorBusy] = useState({ id: null, action: null });
   const [deviceFormValues, setDeviceFormValues] = useState(deviceBlankForm);
   const [timetableFormValues, setTimetableFormValues] = useState(timetableBlankForm);
+  const [holidayFormValues, setHolidayFormValues] = useState(holidayBlankForm);
+  const [permissionFormValues, setPermissionFormValues] = useState(permissionBlankForm);
   const [groupFormValues, setGroupFormValues] = useState(groupBlankForm);
   const [departmentFormValues, setDepartmentFormValues] = useState(departmentBlankForm);
   const [positionFormValues, setPositionFormValues] = useState(positionBlankForm);
@@ -1132,12 +1291,58 @@ function App() {
     department: "All Departments",
     employmentStatus: "All Statuses",
     shiftType: "All Shifts",
+    area: "All Areas",
   });
   const [employeeSortField, setEmployeeSortField] = useState("fullName");
   const [employeeSortDirection, setEmployeeSortDirection] = useState("asc");
 
+  useEffect(() => {
+    if (activePage !== "employees") return;
+
+    if (route?.subPage === "create") {
+      setEmployeeView("wizard");
+      setEditingEmployeeId(null);
+      setEmployeeWizardStep(1);
+      setEmployeeVisitedSteps([]);
+      setEmployeeFormValues(employeeBlankForm);
+      setEmployeeDetailId(null);
+      setEmployeeDetailEditMode(false);
+      return;
+    }
+
+    if (route?.subPage === "edit" && Number.isFinite(route?.entityId)) {
+      const employee = employees.find((item) => item.id === route.entityId);
+      if (!employee) return;
+      setEmployeeView("wizard");
+      setEditingEmployeeId(employee.id);
+      setEmployeeWizardStep(1);
+      setEmployeeVisitedSteps([]);
+      setEmployeeFormValues(employeeToFormValues(employee));
+      setEmployeeDetailId(null);
+      setEmployeeDetailEditMode(false);
+      return;
+    }
+
+    if (route?.subPage === "detail" && Number.isFinite(route?.entityId)) {
+      const employee = employees.find((item) => item.id === route.entityId);
+      if (!employee) return;
+      setEmployeeView("list");
+      setEmployeeDetailId(employee.id);
+      setEmployeeDetailEditMode(false);
+      setEmployeeDetailFormValues(employeeToFormValues(employee));
+      return;
+    }
+
+    setEmployeeView("list");
+    setEditingEmployeeId(null);
+    setEmployeeDetailId(null);
+    setEmployeeDetailEditMode(false);
+  }, [activePage, employees, route?.entityId, route?.subPage]);
+
   const selectedDevice = devices.find((device) => device.id === drawerDeviceId) ?? null;
   const editingTimetable = timetables.find((timetable) => timetable.id === editingTimetableId) ?? null;
+  const editingHoliday = holidays.find((holiday) => holiday.id === editingHolidayId) ?? null;
+  const editingPermission = permissions.find((permission) => permission.id === editingPermissionId) ?? null;
   const editingGroup = groups.find((group) => group.id === editingGroupId) ?? null;
   const assignGroup = groups.find((group) => group.id === assignGroupId) ?? null;
   const editingDepartment = departments.find((department) => department.id === editingDepartmentId) ?? null;
@@ -1157,10 +1362,44 @@ function App() {
     value: device.id,
     label: `${device.name} (${device.ip})`,
   }));
+  const permissionTargetOptions = {
+    employee: employees.map((employee) => employee.internalId),
+    group: groups.map((group) => group.name),
+    position: positions.map((position) => position.name),
+    department: departments.map((department) => department.name),
+  };
+  const deviceLabelMap = useMemo(
+    () => Object.fromEntries(devices.map((device) => [device.id, `${device.name} (${device.ip})`])),
+    [devices],
+  );
+
+  const getEmployeeAreaLabel = (employee) => {
+    const directIds = employee.assignedDeviceIds || [];
+    const groupEntity = groups.find((group) => group.name === employee.group);
+    const departmentEntity = departments.find((department) => department.name === employee.department);
+    const positionEntity = positions.find((position) => position.name === employee.position);
+    const mergedIds = [
+      ...directIds,
+      ...(groupEntity?.assignedDeviceIds || []),
+      ...(departmentEntity?.assignedDeviceIds || []),
+      ...(positionEntity?.assignedDeviceIds || []),
+    ];
+    const uniqueIds = [...new Set(mergedIds)];
+
+    return uniqueIds.length
+      ? uniqueIds.map((deviceId) => deviceLabelMap[deviceId]).filter(Boolean).join(", ")
+      : "-";
+  };
+
+  const employeeAreaOptions = useMemo(() => {
+    const labels = [...new Set(employees.map((employee) => getEmployeeAreaLabel(employee)).filter(Boolean))];
+    return ["All Areas", ...labels];
+  }, [employees, groups, departments, positions, deviceLabelMap]);
 
   const filteredEmployees = useMemo(() => {
     const search = employeeFilters.search.trim().toLowerCase();
     const matchedEmployees = employees.filter((employee) => {
+      const areaLabel = getEmployeeAreaLabel(employee).toLowerCase();
       const fullName = employee.fullName.toLowerCase();
       const matchesSearch =
         !search ||
@@ -1168,7 +1407,15 @@ function App() {
         employee.internalId.toLowerCase().includes(search) ||
         employee.department.toLowerCase().includes(search) ||
         employee.position.toLowerCase().includes(search) ||
-        employee.fin.toLowerCase().includes(search);
+        employee.fin.toLowerCase().includes(search) ||
+        employee.fatherName.toLowerCase().includes(search) ||
+        employee.serialNumber.toLowerCase().includes(search) ||
+        employee.email.toLowerCase().includes(search) ||
+        employee.phone.toLowerCase().includes(search) ||
+        employee.group.toLowerCase().includes(search) ||
+        employee.shiftType.toLowerCase().includes(search) ||
+        employee.employmentStatus.toLowerCase().includes(search) ||
+        areaLabel.includes(search);
 
       const matchesDepartment =
         employeeFilters.department === "All Departments" ||
@@ -1179,13 +1426,16 @@ function App() {
       const matchesShift =
         employeeFilters.shiftType === "All Shifts" ||
         employee.shiftType === employeeFilters.shiftType;
+      const matchesArea =
+        employeeFilters.area === "All Areas" ||
+        getEmployeeAreaLabel(employee) === employeeFilters.area;
 
-      return matchesSearch && matchesDepartment && matchesStatus && matchesShift;
+      return matchesSearch && matchesDepartment && matchesStatus && matchesShift && matchesArea;
     });
 
     return [...matchedEmployees].sort((left, right) => {
-      const leftValue = getEmployeeSortValue(left, employeeSortField);
-      const rightValue = getEmployeeSortValue(right, employeeSortField);
+      const leftValue = getEmployeeSortValue(left, employeeSortField, getEmployeeAreaLabel);
+      const rightValue = getEmployeeSortValue(right, employeeSortField, getEmployeeAreaLabel);
 
       let compareResult = 0;
       if (typeof leftValue === "number" && typeof rightValue === "number") {
@@ -1199,7 +1449,16 @@ function App() {
 
       return employeeSortDirection === "asc" ? compareResult : compareResult * -1;
     });
-  }, [employeeFilters, employeeSortDirection, employeeSortField, employees]);
+  }, [
+    departments,
+    deviceLabelMap,
+    employeeFilters,
+    employeeSortDirection,
+    employeeSortField,
+    employees,
+    groups,
+    positions,
+  ]);
 
   const employeeStats = useMemo(
     () => ({
@@ -1207,6 +1466,48 @@ function App() {
       active: employees.filter((employee) => employee.employmentStatus === "Active").length,
       onLeave: employees.filter((employee) => employee.employmentStatus === "On Leave").length,
     }),
+    [employees],
+  );
+
+  const dashboardStats = useMemo(
+    () => ({
+      atWork: employees.filter((employee) => employee.employmentStatus === "Active").length,
+      totalEmployees: employees.length,
+      permissions: new Set(
+        permissions
+          .map((permission) => `${permission.applyToType}:${permission.targetValue}`)
+          .filter(Boolean),
+      ).size,
+      onLeave: employees.filter((employee) => employee.employmentStatus === "On Leave").length,
+      totalDevices: devices.length,
+      onlineDevices: devices.filter((device) => device.online).length,
+      offlineDevices: devices.filter((device) => !device.online).length,
+    }),
+    [devices, employees, permissions],
+  );
+
+  const dashboardRecentEntries = useMemo(
+    () =>
+      initialAttendanceRecords
+        .map((record) => {
+          const employee = employees.find((item) => item.id === record.employeeId);
+          if (!employee) return null;
+          return {
+            id: record.id,
+            fullName: employee.fullName,
+            internalId: employee.internalId,
+            checkIn: record.checkIn,
+            date: record.date,
+            method: record.recognitionMethod,
+          };
+        })
+        .filter(Boolean)
+        .sort((left, right) => {
+          const leftDate = new Date(`${left.date}T${left.checkIn}:00`).getTime();
+          const rightDate = new Date(`${right.date}T${right.checkIn}:00`).getTime();
+          return rightDate - leftDate;
+        })
+        .slice(0, 10),
     [employees],
   );
 
@@ -1313,6 +1614,11 @@ function App() {
     window.setTimeout(() => setTimetableRefreshing(false), 1200);
   };
 
+  const handlePermissionRefresh = () => {
+    setPermissionRefreshing(true);
+    window.setTimeout(() => setPermissionRefreshing(false), 1200);
+  };
+
   const handleGroupRefresh = () => {
     setGroupRefreshing(true);
     window.setTimeout(() => setGroupRefreshing(false), 1200);
@@ -1347,6 +1653,34 @@ function App() {
       allowedEarlyLeaveMinutes: timetable.allowedEarlyLeaveMinutes,
     });
     setTimetableFormOpen(true);
+  };
+
+  const openHolidayCreate = () => {
+    setEditingHolidayId(null);
+    setHolidayFormValues(holidayBlankForm);
+    setHolidayFormOpen(true);
+  };
+
+  const openHolidayEdit = (id) => {
+    const holiday = holidays.find((item) => item.id === id);
+    if (!holiday) return;
+    setEditingHolidayId(id);
+    setHolidayFormValues({ ...holiday });
+    setHolidayFormOpen(true);
+  };
+
+  const openPermissionCreate = () => {
+    setEditingPermissionId(null);
+    setPermissionFormValues(permissionBlankForm);
+    setPermissionFormOpen(true);
+  };
+
+  const openPermissionEdit = (id) => {
+    const permission = permissions.find((item) => item.id === id);
+    if (!permission) return;
+    setEditingPermissionId(id);
+    setPermissionFormValues({ ...permission });
+    setPermissionFormOpen(true);
   };
 
   const handleTimetableSubmit = (event) => {
@@ -1389,6 +1723,70 @@ function App() {
     setTimetables((current) => current.filter((item) => item.id !== deleteTimetableId));
     setDeleteTimetableId(null);
     setTimetablePage(1);
+  };
+
+  const handleHolidaySubmit = (event) => {
+    event.preventDefault();
+    if (!holidayFormValues.name.trim() || !holidayFormValues.date.trim()) {
+      window.alert("Please complete all holiday fields before saving.");
+      return;
+    }
+    if (!holidayFormValues.applyScopes.length) {
+      window.alert("Please choose at least one holiday apply scope.");
+      return;
+    }
+    if (holidayFormValues.applyScopes.includes("department") && !holidayFormValues.departmentNames.length) {
+      window.alert("Please select at least one department for this holiday.");
+      return;
+    }
+    if (holidayFormValues.applyScopes.includes("group") && !holidayFormValues.groupNames.length) {
+      window.alert("Please select at least one group for this holiday.");
+      return;
+    }
+
+    const record = {
+      id: editingHolidayId || Math.max(...holidays.map((item) => item.id), 0) + 1,
+      ...holidayFormValues,
+    };
+
+    setHolidays((current) =>
+      editingHolidayId ? current.map((item) => (item.id === editingHolidayId ? record : item)) : [record, ...current],
+    );
+    setHolidayFormOpen(false);
+    setEditingHolidayId(null);
+    setHolidayFormValues(holidayBlankForm);
+  };
+
+  const confirmHolidayDelete = () => {
+    if (!deleteHolidayId) return;
+    setHolidays((current) => current.filter((item) => item.id !== deleteHolidayId));
+    setDeleteHolidayId(null);
+  };
+
+  const handlePermissionSubmit = (event) => {
+    event.preventDefault();
+    if (!permissionFormValues.name.trim() || !permissionFormValues.targetValue.trim()) {
+      window.alert("Please complete all permission fields before saving.");
+      return;
+    }
+
+    const record = {
+      id: editingPermissionId || Math.max(...permissions.map((item) => item.id), 0) + 1,
+      ...permissionFormValues,
+    };
+
+    setPermissions((current) =>
+      editingPermissionId ? current.map((item) => (item.id === editingPermissionId ? record : item)) : [record, ...current],
+    );
+    setPermissionFormOpen(false);
+    setEditingPermissionId(null);
+    setPermissionFormValues(permissionBlankForm);
+  };
+
+  const confirmPermissionDelete = () => {
+    if (!deletePermissionId) return;
+    setPermissions((current) => current.filter((item) => item.id !== deletePermissionId));
+    setDeletePermissionId(null);
   };
 
   const openGroupCreate = () => {
@@ -1956,6 +2354,7 @@ function App() {
     setEmployeeVisitedSteps([]);
     setEmployeeFormValues(employeeBlankForm);
     setEmployeeView("wizard");
+    navigate(getEmployeeCreatePath());
   };
 
   const openEmployeeDetail = (id) => {
@@ -1964,6 +2363,7 @@ function App() {
     setEmployeeDetailId(id);
     setEmployeeDetailEditMode(false);
     setEmployeeDetailFormValues(employeeToFormValues(employee));
+    navigate(getEmployeeDetailPath(id));
   };
 
   const openEmployeeEdit = (id) => {
@@ -1974,6 +2374,7 @@ function App() {
     setEmployeeVisitedSteps([]);
     setEmployeeFormValues(employeeToFormValues(employee));
     setEmployeeView("wizard");
+    navigate(getEmployeeEditPath(id));
   };
 
   const closeEmployeeWizard = () => {
@@ -1982,6 +2383,7 @@ function App() {
     setEmployeeWizardStep(1);
     setEmployeeVisitedSteps([]);
     setEmployeeFormValues(employeeBlankForm);
+    navigate(getPagePath("employees"));
   };
 
   const handleEmployeeWizardSubmit = (event) => {
@@ -2039,7 +2441,10 @@ function App() {
     setGroups((current) => syncEntityMembers(current, nextEmployees, "group"));
     setDepartments((current) => syncEntityMembers(current, nextEmployees, "department"));
     setPositions((current) => syncEntityMembers(current, nextEmployees, "position"));
-    if (employeeDetailId === deleteEmployeeId) setEmployeeDetailId(null);
+    if (employeeDetailId === deleteEmployeeId) {
+      setEmployeeDetailId(null);
+      navigate(getPagePath("employees"));
+    }
     setDeleteEmployeeId(null);
     setEmployeePage(1);
   };
@@ -2084,10 +2489,12 @@ function App() {
   return (
     <div className="min-h-screen bg-surface text-navy">
       <div id="app" className="min-h-screen w-full overflow-auto">
-        <Sidebar activePage={activePage} onNavigate={setActivePage} />
+        <Sidebar activePage={activePage} onNavigate={navigate} />
 
         <main className="ml-[260px] min-h-screen p-8 pb-4">
-          {activePage === "devices" ? (
+          {activePage === "dashboard" ? (
+            <DashboardPage stats={dashboardStats} recentEntries={dashboardRecentEntries} />
+          ) : activePage === "devices" ? (
             <DevicesPage
               devices={devices}
               currentPage={devicePage}
@@ -2109,6 +2516,7 @@ function App() {
           ) : activePage === "timetable" ? (
             <TimetablePage
               timetables={timetables}
+              holidays={holidays}
               currentPage={timetablePage}
               setCurrentPage={setTimetablePage}
               onRefresh={handleTimetableRefresh}
@@ -2116,9 +2524,21 @@ function App() {
               onAddTimetable={openTimetableCreate}
               onEditTimetable={openTimetableEdit}
               onDeleteTimetable={setDeleteTimetableId}
+              onAddHoliday={openHolidayCreate}
+              onEditHoliday={openHolidayEdit}
+              onDeleteHoliday={setDeleteHolidayId}
+            />
+          ) : activePage === "permissions" ? (
+            <PermissionsPage
+              permissions={permissions}
+              refreshing={permissionRefreshing}
+              onRefresh={handlePermissionRefresh}
+              onAddPermission={openPermissionCreate}
+              onEditPermission={openPermissionEdit}
+              onDeletePermission={setDeletePermissionId}
             />
           ) : activePage === "tabel" ? (
-            <TabelArchivePage archives={tabelArchivesData} />
+            <TabelArchivePageV2 archives={tabelArchivesData} />
           ) : activePage === "groups" ? (
             <GroupsPage
               groups={groups}
@@ -2161,6 +2581,17 @@ function App() {
               onAssignPosition={openPositionAssign}
               timetables={timetables}
             />
+          ) : activePage === "attendance" ? (
+            <AttendancePage
+              employees={employees}
+              groups={groups}
+              departments={departments}
+              positions={positions}
+              devices={devices}
+              attendanceRecords={initialAttendanceRecords}
+              activeTabKey={route?.subPage || "flexible"}
+              onTabChange={(tabKey) => navigate(getAttendancePath(tabKey))}
+            />
           ) : activePage === "employees" ? (
             <EmployeesPage
               employees={employees}
@@ -2168,6 +2599,7 @@ function App() {
               filters={employeeFilters}
               setFilters={setEmployeeFilters}
               departmentFilterOptions={["All Departments", ...departmentOptions]}
+              areaFilterOptions={employeeAreaOptions}
               currentPage={employeePage}
               setCurrentPage={setEmployeePage}
               stats={employeeStats}
@@ -2202,7 +2634,10 @@ function App() {
               departmentOptions={departmentOptions}
               positionOptions={positionOptions}
               devices={deviceOptions}
+              resolveAreaLabel={getEmployeeAreaLabel}
             />
+          ) : activePage === "access" ? (
+            <AccessLogsPage deviceLogs={deviceLogRecords} systemLogs={systemAuditRecords} />
           ) : (
             <PlaceholderPage
               title={sidebarItems.find((item) => item.key === activePage)?.label || "Page"}
@@ -2232,6 +2667,35 @@ function App() {
             setTimetableFormValues(timetableBlankForm);
           }}
           onSubmit={handleTimetableSubmit}
+        />
+
+        <HolidayFormModal
+          isOpen={holidayFormOpen}
+          editing={Boolean(editingHoliday)}
+          values={holidayFormValues}
+          onChange={setHolidayFormValues}
+          departmentOptions={departmentOptions}
+          groupOptions={groupOptions}
+          onClose={() => {
+            setHolidayFormOpen(false);
+            setEditingHolidayId(null);
+            setHolidayFormValues(holidayBlankForm);
+          }}
+          onSubmit={handleHolidaySubmit}
+        />
+
+        <PermissionFormModal
+          isOpen={permissionFormOpen}
+          editing={Boolean(editingPermission)}
+          values={permissionFormValues}
+          onChange={setPermissionFormValues}
+          targetOptions={permissionTargetOptions}
+          onClose={() => {
+            setPermissionFormOpen(false);
+            setEditingPermissionId(null);
+            setPermissionFormValues(permissionBlankForm);
+          }}
+          onSubmit={handlePermissionSubmit}
         />
 
         <GroupFormModal
@@ -2316,6 +2780,28 @@ function App() {
           icon={<AlertCircleIcon className="h-6 w-6 text-red-500" />}
         />
 
+        <ConfirmModal
+          isOpen={Boolean(deleteHolidayId)}
+          tone="danger"
+          title="Delete Holiday?"
+          description="Are you sure you want to delete this holiday day record?"
+          confirmText="Delete"
+          onClose={() => setDeleteHolidayId(null)}
+          onConfirm={confirmHolidayDelete}
+          icon={<AlertCircleIcon className="h-6 w-6 text-red-500" />}
+        />
+
+        <ConfirmModal
+          isOpen={Boolean(deletePermissionId)}
+          tone="danger"
+          title="Delete Permission?"
+          description="Are you sure you want to delete this permission policy?"
+          confirmText="Delete"
+          onClose={() => setDeletePermissionId(null)}
+          onConfirm={confirmPermissionDelete}
+          icon={<AlertCircleIcon className="h-6 w-6 text-red-500" />}
+        />
+
         <EmployeeDetailModal
           employee={selectedEmployee}
           editMode={employeeDetailEditMode}
@@ -2331,6 +2817,7 @@ function App() {
           onClose={() => {
             setEmployeeDetailId(null);
             setEmployeeDetailEditMode(false);
+            navigate(getPagePath("employees"));
           }}
         />
 
@@ -2419,6 +2906,7 @@ function App() {
 }
 
 function Sidebar({ activePage, onNavigate }) {
+  const { t } = useI18n();
   return (
     <aside className="fixed left-0 top-0 z-30 flex h-full w-[260px] flex-col bg-navy">
       <div className="flex items-center gap-3 px-6 pb-5 pt-7">
@@ -2432,7 +2920,7 @@ function Sidebar({ activePage, onNavigate }) {
         {sidebarItems.map((item) => (
           <button
             key={item.key}
-            onClick={() => onNavigate(item.key)}
+            onClick={() => onNavigate(getPagePath(item.key))}
             className={`mb-1 flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium transition ${
               item.key === activePage
                 ? "bg-purple/20 font-semibold text-white"
@@ -2443,12 +2931,15 @@ function Sidebar({ activePage, onNavigate }) {
               type={item.icon}
               className={`h-[18px] w-[18px] ${item.key === activePage ? "text-purple" : ""}`}
             />
-            {item.label}
+            {t(`nav.${item.key}`, item.label)}
           </button>
         ))}
       </nav>
 
       <div className="px-4 pb-6">
+        <div className="mb-3">
+          <LanguageSwitcher />
+        </div>
         <div className="flex items-center gap-3 rounded-xl bg-white/5 p-4">
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-yellow text-sm font-bold text-navy">
             JD
@@ -2704,11 +3195,13 @@ function DevicesPage(props) {
 }
 
 function EmployeesPage(props) {
+  const { t } = useI18n();
   const {
     filteredEmployees,
     filters,
     setFilters,
     departmentFilterOptions,
+    areaFilterOptions,
     currentPage,
     setCurrentPage,
     stats,
@@ -2733,8 +3226,10 @@ function EmployeesPage(props) {
     setFormValues,
     onFormSubmit,
     groupOptions,
+    departmentOptions,
     positionOptions,
     devices,
+    resolveAreaLabel,
   } = props;
 
   if (view === "wizard") {
@@ -2748,10 +3243,10 @@ function EmployeesPage(props) {
         visitedSteps={visitedSteps}
         setVisitedSteps={setVisitedSteps}
         onBack={onBackToList}
-        onSubmit={onFormSubmit}
-        groupOptions={groupOptions}
-        departmentOptions={departmentOptions}
-        positionOptions={positionOptions}
+          onSubmit={onFormSubmit}
+          groupOptions={groupOptions}
+          departmentOptions={departmentOptions}
+          positionOptions={positionOptions}
         devices={devices}
       />
     );
@@ -2770,12 +3265,12 @@ function EmployeesPage(props) {
       <div className="mb-8 flex items-start justify-between gap-6">
         <div>
           <h1 className="text-[28px] font-bold leading-tight tracking-tight text-navy">
-            All Employees
+            {t("employees.title", "All Employees")}
           </h1>
           <p className="mt-1.5 text-sm font-medium text-navy/50">
-            {stats.total} employees total -{" "}
-            <span className="font-semibold text-emerald-500">{stats.active} active</span> -{" "}
-            <span className="font-semibold text-yellow-600">{stats.onLeave} on leave</span>
+            {stats.total} {t("employees.summary.total", "employees")} -{" "}
+            <span className="font-semibold text-emerald-500">{stats.active} {t("employees.summary.active", "active")}</span> -{" "}
+            <span className="font-semibold text-yellow-600">{stats.onLeave} {t("employees.summary.onLeave", "on leave")}</span>
           </p>
         </div>
 
@@ -2785,20 +3280,20 @@ function EmployeesPage(props) {
             className="flex items-center gap-2 rounded-xl border-2 border-navy/10 bg-white px-5 py-2.5 text-sm font-semibold text-navy transition hover:border-purple/30 hover:text-purple"
           >
             <RefreshIcon className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-            Refresh
+            {t("common.refresh", "Refresh")}
           </button>
           <button
             onClick={onAddEmployee}
             className="flex items-center gap-2 rounded-xl bg-purple px-5 py-2.5 text-sm font-semibold text-white shadow-purple transition hover:bg-purple/90"
           >
             <PlusIcon className="h-4 w-4" />
-            Add Employee
+            {t("employees.add", "Add Employee")}
           </button>
         </div>
       </div>
 
       <div className="mb-4 rounded-2xl border border-navy/[0.05] bg-white p-4 shadow-sm">
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-5 gap-3">
           <div className="relative">
             <SearchIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/30" />
             <input
@@ -2807,7 +3302,7 @@ function EmployeesPage(props) {
                 setFilters((current) => ({ ...current, search: event.target.value }));
                 setCurrentPage(1);
               }}
-              placeholder="Search employees"
+              placeholder={t("employees.searchPlaceholder", "Search employees")}
               className="w-full rounded-xl border border-navy/10 bg-surface py-3 pl-11 pr-4 text-sm font-medium text-navy outline-none transition focus:border-purple focus:ring-2 focus:ring-purple/20"
             />
           </div>
@@ -2836,35 +3331,44 @@ function EmployeesPage(props) {
             }}
             options={employeeShiftOptions}
           />
+          <FilterSelect
+            value={filters.area}
+            onChange={(value) => {
+              setFilters((current) => ({ ...current, area: value }));
+              setCurrentPage(1);
+            }}
+            options={areaFilterOptions}
+          />
         </div>
       </div>
 
       <div className="overflow-hidden rounded-[24px] border border-navy/[0.05] bg-white shadow-sm">
-        <div className="overflow-x-auto overflow-y-hidden">
-          <div className="min-w-[2280px]">
-            <div className="grid grid-cols-[120px_90px_120px_180px_150px_150px_170px_110px_130px_150px_150px_170px_120px_120px_130px_170px] items-center gap-3 border-b border-navy/[0.05] bg-surface/70 px-5 py-4 text-[11px] font-bold uppercase tracking-[0.18em] text-navy/40">
-              <span>Actions</span>
-              <span>Photo</span>
+        <div className="max-h-[820px] overflow-auto">
+          <div className="min-w-[2440px]">
+            <div className="grid grid-cols-[120px_90px_120px_180px_150px_150px_170px_240px_110px_130px_150px_150px_170px_120px_120px_130px_170px] items-center gap-3 border-b border-navy/[0.05] bg-surface/70 px-5 py-4 text-[11px] font-bold uppercase tracking-[0.18em] text-navy/40">
+              <span>{t("common.actions", "Actions")}</span>
+              <span>{t("common.photo", "Photo")}</span>
               <SortableHeader label="Employee ID" field="internalId" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
               <SortableHeader label="Full Name" field="fullName" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
               <SortableHeader label="Father's Name" field="fatherName" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
-              <SortableHeader label="Department" field="department" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
-              <SortableHeader label="Position" field="position" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label={t("employees.columns.department", "Department")} field="department" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label={t("employees.columns.position", "Position")} field="position" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label={t("employees.columns.area", "Area")} field="area" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
               <SortableHeader label="FIN" field="fin" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
               <SortableHeader label="Serial Number" field="serialNumber" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
               <SortableHeader label="Start Date" field="employmentStartDate" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
               <SortableHeader label="Contract End" field="contractEndDate" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
               <SortableHeader label="Leave Balance / Duration" field="annualLeaveBalance" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
               <SortableHeader label="Salary" field="salary" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
-              <SortableHeader label="Status" field="employmentStatus" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
-              <SortableHeader label="Shift Type" field="shiftType" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
-              <SortableHeader label="Group" field="group" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label={t("employees.columns.status", "Status")} field="employmentStatus" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label={t("employees.columns.shiftType", "Shift Type")} field="shiftType" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
+              <SortableHeader label={t("employees.columns.group", "Group")} field="group" sortField={sortField} sortDirection={sortDirection} onSort={onSort} />
             </div>
 
             {visibleEmployees.map((employee) => (
               <div
                 key={employee.id}
-                className="grid grid-cols-[120px_90px_120px_180px_150px_150px_170px_110px_130px_150px_150px_170px_120px_120px_130px_170px] items-center gap-3 border-b border-navy/[0.05] px-5 py-4 text-sm text-navy last:border-b-0"
+                className="grid grid-cols-[120px_90px_120px_180px_150px_150px_170px_240px_110px_130px_150px_150px_170px_120px_120px_130px_170px] items-center gap-3 border-b border-navy/[0.05] px-5 py-4 text-sm text-navy last:border-b-0"
               >
                 <div className="flex items-center gap-2">
                   <button
@@ -2906,6 +3410,7 @@ function EmployeesPage(props) {
                 <span>{employee.fatherName}</span>
                 <span>{employee.department}</span>
                 <span>{employee.position}</span>
+                <span className="text-xs leading-5 text-navy/70">{resolveAreaLabel(employee)}</span>
                 <span>{employee.fin}</span>
                 <span>{employee.serialNumber}</span>
                 <span>{employee.employmentStartDate}</span>
@@ -2921,7 +3426,7 @@ function EmployeesPage(props) {
                   onChange={(event) => onEmployeeGroupChange(employee.id, event.target.value)}
                   className="rounded-xl border border-navy/10 bg-surface px-3 py-2 text-sm font-medium text-navy outline-none transition focus:border-purple focus:bg-white"
                 >
-                  <option value="">No Group</option>
+                  <option value="">{t("common.noGroup", "No Group")}</option>
                   {groupOptions.map((option) => (
                     <option key={option} value={option}>
                       {option}
@@ -2933,7 +3438,7 @@ function EmployeesPage(props) {
 
             {visibleEmployees.length === 0 ? (
               <div className="px-6 py-12 text-center text-sm font-medium text-navy/45">
-                No employees matched the current filters.
+                {t("common.noResults", "No results matched the current search.")}
               </div>
             ) : null}
           </div>
@@ -2952,6 +3457,7 @@ function EmployeesPage(props) {
 
 function TimetablePage({
   timetables,
+  holidays,
   currentPage,
   setCurrentPage,
   onRefresh,
@@ -2959,7 +3465,12 @@ function TimetablePage({
   onAddTimetable,
   onEditTimetable,
   onDeleteTimetable,
+  onAddHoliday,
+  onEditHoliday,
+  onDeleteHoliday,
 }) {
+  const { t } = useI18n();
+  const [activeSection, setActiveSection] = useState("schedules");
   const totalPages = Math.max(1, Math.ceil(timetables.length / TIMETABLE_PER_PAGE));
   const safePage = Math.min(currentPage, totalPages);
   const pageStart = (safePage - 1) * TIMETABLE_PER_PAGE;
@@ -2973,10 +3484,10 @@ function TimetablePage({
       <div className="mb-8 flex items-start justify-between gap-6">
         <div>
           <h1 className="text-[28px] font-bold leading-tight tracking-tight text-navy">
-            All Timetables
+            {t("schedule.title", "Work Schedule")}
           </h1>
           <p className="mt-1.5 text-sm font-medium text-navy/50">
-            {timetables.length} timetable records configured for attendance operations
+            {t("schedule.subtitle", "Manage primary work schedules and holiday days")}
           </p>
         </div>
 
@@ -2986,20 +3497,51 @@ function TimetablePage({
             className="flex items-center gap-2 rounded-xl border-2 border-navy/10 bg-white px-5 py-2.5 text-sm font-semibold text-navy transition hover:border-purple/30 hover:text-purple"
           >
             <RefreshIcon className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-            Refresh
+            {t("common.refresh", "Refresh")}
           </button>
           <button
-            onClick={onAddTimetable}
+            onClick={activeSection === "schedules" ? onAddTimetable : onAddHoliday}
             className="flex items-center gap-2 rounded-xl bg-purple px-5 py-2.5 text-sm font-semibold text-white shadow-purple transition hover:bg-purple/90"
           >
             <PlusIcon className="h-4 w-4" />
-            Add Timetable
+            {activeSection === "schedules"
+              ? t("schedule.addSchedule", "Add Schedule")
+              : t("schedule.addHoliday", "Add Holiday")}
           </button>
         </div>
       </div>
 
-      <div className="flex flex-col gap-4">
-        {visibleTimetables.map((timetable, index) => (
+      <div className="mb-4 rounded-2xl border border-navy/[0.05] bg-white p-4 shadow-sm">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setActiveSection("schedules")}
+            className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+              activeSection === "schedules"
+                ? "bg-purple text-white shadow-purple"
+                : "bg-surface text-navy hover:bg-purple/10 hover:text-purple"
+            }`}
+          >
+            {t("schedule.tabs.schedules", "Primary Schedules")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSection("holidays")}
+            className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+              activeSection === "holidays"
+                ? "bg-purple text-white shadow-purple"
+                : "bg-surface text-navy hover:bg-purple/10 hover:text-purple"
+            }`}
+          >
+            {t("schedule.tabs.holidays", "Holiday Days")}
+          </button>
+        </div>
+      </div>
+
+      {activeSection === "schedules" ? (
+        <>
+          <div className="flex flex-col gap-4">
+            {visibleTimetables.map((timetable, index) => (
           <div
             key={timetable.id}
             className="card-row rounded-[24px] border border-navy/[0.04] bg-white p-6 shadow-sm"
@@ -3056,15 +3598,170 @@ function TimetablePage({
               </div>
             </div>
           </div>
-        ))}
+            ))}
+          </div>
+
+          <Pagination
+            currentPage={safePage}
+            totalPages={totalPages}
+            onPageChange={setCurrentPage}
+            summary={`Showing ${rangeStart}-${rangeEnd} of ${timetables.length} work schedules`}
+          />
+        </>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {holidays.map((holiday, index) => (
+            <div
+              key={holiday.id}
+              className="card-row rounded-[24px] border border-navy/[0.04] bg-white p-6 shadow-sm"
+              style={{ animation: `fadeUp 0.35s ${staggerDelays[index % staggerDelays.length]} both` }}
+            >
+              <div className="flex items-start gap-6">
+                <div className="w-[320px] shrink-0">
+                  <div className="mb-3 flex items-center gap-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-yellow/20 text-yellow-700">
+                      <CalendarIcon className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-[17px] font-semibold text-navy">{holiday.name}</h3>
+                      <p className="mt-1 text-sm text-navy/45">{holiday.description}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-1 items-start gap-0">
+                  <InfoBlock label="Date">
+                    <div className="text-sm font-semibold text-navy">{holiday.date}</div>
+                  </InfoBlock>
+                  <InfoBlock label="Apply To">
+                    <div className="text-sm font-semibold text-navy">
+                      {[
+                        holiday.applyScopes.includes("company") ? "Bütün şirkət" : null,
+                        ...(holiday.departmentNames || []),
+                        ...(holiday.groupNames || []),
+                      ]
+                        .filter(Boolean)
+                        .join(", ")}
+                    </div>
+                  </InfoBlock>
+                </div>
+
+                <div className="ml-2 flex shrink-0 items-center gap-2">
+                  <button
+                    onClick={() => onEditHoliday(holiday.id)}
+                    className="flex h-10 w-10 items-center justify-center rounded-xl border border-navy/10 bg-white text-navy transition hover:border-purple/20 hover:text-purple"
+                    aria-label="Edit holiday"
+                  >
+                    <PencilIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => onDeleteHoliday(holiday.id)}
+                    className="flex h-10 w-10 items-center justify-center rounded-xl border border-red-200 bg-red-50 text-red-500 transition hover:bg-red-500 hover:text-white"
+                    aria-label="Delete holiday"
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PermissionsPage({
+  permissions,
+  refreshing,
+  onRefresh,
+  onAddPermission,
+  onEditPermission,
+  onDeletePermission,
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="mx-auto max-w-[1180px]">
+      <div className="mb-8 flex items-start justify-between gap-6">
+        <div>
+          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-navy">
+            {t("permissions.title", "Permissions")}
+          </h1>
+          <p className="mt-1.5 text-sm font-medium text-navy/50">
+            {t(
+              "permissions.subtitle",
+              "Bind permission rules to employees, groups, positions, and departments",
+            )}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onRefresh}
+            className="flex items-center gap-2 rounded-xl border-2 border-navy/10 bg-white px-5 py-2.5 text-sm font-semibold text-navy transition hover:border-purple/30 hover:text-purple"
+          >
+            <RefreshIcon className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+            {t("common.refresh", "Refresh")}
+          </button>
+          <button
+            onClick={onAddPermission}
+            className="flex items-center gap-2 rounded-xl bg-purple px-5 py-2.5 text-sm font-semibold text-white shadow-purple transition hover:bg-purple/90"
+          >
+            <PlusIcon className="h-4 w-4" />
+            İcazə əlavə et
+          </button>
+        </div>
       </div>
 
-      <Pagination
-        currentPage={safePage}
-        totalPages={totalPages}
-        onPageChange={setCurrentPage}
-        summary={`Showing ${rangeStart}-${rangeEnd} of ${timetables.length} timetables`}
-      />
+      <div className="flex flex-col gap-4">
+        {permissions.map((permission, index) => (
+          <div
+            key={permission.id}
+            className="card-row rounded-[24px] border border-navy/[0.04] bg-white p-6 shadow-sm"
+            style={{ animation: `fadeUp 0.35s ${staggerDelays[index % staggerDelays.length]} both` }}
+          >
+            <div className="flex items-start gap-6">
+              <div className="w-[320px] shrink-0">
+                <div className="mb-3 flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-purple/10 text-purple">
+                    <UsersIcon className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-[17px] font-semibold text-navy">{permission.name}</h3>
+                    <p className="mt-1 text-sm text-navy/45">{permission.description}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-1 items-start gap-0">
+                <InfoBlock label="Apply Type">
+                  <div className="text-sm font-semibold text-navy">{permission.applyToType}</div>
+                </InfoBlock>
+                <InfoBlock label="Target">
+                  <div className="text-sm font-semibold text-navy">{permission.targetValue}</div>
+                </InfoBlock>
+              </div>
+
+              <div className="ml-2 flex shrink-0 items-center gap-2">
+                <button
+                  onClick={() => onEditPermission(permission.id)}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-navy/10 bg-white text-navy transition hover:border-purple/20 hover:text-purple"
+                  aria-label="Edit permission"
+                >
+                  <PencilIcon className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => onDeletePermission(permission.id)}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-red-200 bg-red-50 text-red-500 transition hover:bg-red-500 hover:text-white"
+                  aria-label="Delete permission"
+                >
+                  <TrashIcon className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -3214,6 +3911,7 @@ function DepartmentsPage({
   onAssignDepartment,
   timetables,
 }) {
+  const { t } = useI18n();
   const totalPages = Math.max(1, Math.ceil(departments.length / GROUP_PER_PAGE));
   const safePage = Math.min(currentPage, totalPages);
   const pageStart = (safePage - 1) * GROUP_PER_PAGE;
@@ -3225,7 +3923,7 @@ function DepartmentsPage({
     <div className="mx-auto max-w-[1180px]">
       <div className="mb-8 flex items-start justify-between gap-6">
         <div>
-          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-navy">All Departments</h1>
+          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-navy">{t("departments.title", "All Departments")}</h1>
           <p className="mt-1.5 text-sm font-medium text-navy/50">
             {departments.length} department and sub-department structures for employee organization
           </p>
@@ -3237,7 +3935,7 @@ function DepartmentsPage({
             className="flex items-center gap-2 rounded-xl border-2 border-navy/10 bg-white px-5 py-2.5 text-sm font-semibold text-navy transition hover:border-purple/30 hover:text-purple"
           >
             <RefreshIcon className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-            Refresh
+            {t("common.refresh", "Refresh")}
           </button>
           <button
             onClick={onAddDepartment}
@@ -3345,6 +4043,7 @@ function PositionsPage({
   onAssignPosition,
   timetables,
 }) {
+  const { t } = useI18n();
   const totalPages = Math.max(1, Math.ceil(positions.length / GROUP_PER_PAGE));
   const safePage = Math.min(currentPage, totalPages);
   const pageStart = (safePage - 1) * GROUP_PER_PAGE;
@@ -3356,7 +4055,7 @@ function PositionsPage({
     <div className="mx-auto max-w-[1180px]">
       <div className="mb-8 flex items-start justify-between gap-6">
         <div>
-          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-navy">All Positions</h1>
+          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-navy">{t("positions.title", "All Positions")}</h1>
           <p className="mt-1.5 text-sm font-medium text-navy/50">
             {positions.length} categorized job positions mapped under departments
           </p>
@@ -3368,7 +4067,7 @@ function PositionsPage({
             className="flex items-center gap-2 rounded-xl border-2 border-navy/10 bg-white px-5 py-2.5 text-sm font-semibold text-navy transition hover:border-purple/30 hover:text-purple"
           >
             <RefreshIcon className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-            Refresh
+            {t("common.refresh", "Refresh")}
           </button>
           <button
             onClick={onAddPosition}
@@ -3459,6 +4158,474 @@ function PositionsPage({
         onPageChange={setCurrentPage}
         summary={`Showing ${rangeStart}-${rangeEnd} of ${positions.length} positions`}
       />
+    </div>
+  );
+}
+
+function AttendancePage({
+  employees,
+  groups,
+  departments,
+  positions,
+  devices,
+  attendanceRecords,
+  activeTabKey = "flexible",
+  onTabChange,
+}) {
+  const { language, t } = useI18n();
+  const activeTab = attendanceTabs.some((tab) => tab.key === activeTabKey)
+    ? activeTabKey
+    : "flexible";
+  const [filters, setFilters] = useState({
+    fromDate: "",
+    toDate: "",
+    internalId: "",
+    fullName: "",
+    fin: "",
+    position: "",
+    department: "",
+    area: "",
+  });
+  const [previewImage, setPreviewImage] = useState(null);
+  const [sortField, setSortField] = useState("date");
+  const [sortDirection, setSortDirection] = useState("desc");
+
+  const handleSort = (field) => {
+    if (field === sortField) {
+      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
+
+  const applyQuickFilter = (field, value) => {
+    setFilters((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  };
+
+  const deviceLabelMap = useMemo(
+    () =>
+      Object.fromEntries(
+        devices.map((device) => [device.id, `${device.name} (${device.ip})`]),
+      ),
+    [devices],
+  );
+
+  const getAreaLabel = (employee) => {
+    const direct = employee.assignedDeviceIds || [];
+    const groupEntity = groups.find((group) => group.name === employee.group);
+    const departmentEntity = departments.find((department) => department.name === employee.department);
+    const positionEntity = positions.find((position) => position.name === employee.position);
+    const merged = [
+      ...direct,
+      ...(groupEntity?.assignedDeviceIds || []),
+      ...(departmentEntity?.assignedDeviceIds || []),
+      ...(positionEntity?.assignedDeviceIds || []),
+    ];
+    const unique = [...new Set(merged)];
+    return unique.length
+      ? unique.map((deviceId) => deviceLabelMap[deviceId]).filter(Boolean).join(", ")
+      : "-";
+  };
+
+  const parseMinutes = (timeValue) => {
+    const [hours, minutes] = String(timeValue).split(":").map(Number);
+    return hours * 60 + minutes;
+  };
+
+  const formatMinutes = (minutes) => {
+    const normalized = ((minutes % 1440) + 1440) % 1440;
+    const hours = String(Math.floor(normalized / 60)).padStart(2, "0");
+    const mins = String(normalized % 60).padStart(2, "0");
+    return `${hours}:${mins}`;
+  };
+
+  const getWorkedDuration = (checkIn, checkOut) => {
+    let start = parseMinutes(checkIn);
+    let end = parseMinutes(checkOut);
+    if (end < start) end += 1440;
+    const duration = end - start;
+    const hours = Math.floor(duration / 60);
+    const minutes = duration % 60;
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  };
+
+  const getCategory = (employee) => {
+    if (employee.shiftType === "Flexible Shift") return "flexible";
+    if (employee.shiftType === "Standard Shift") return "standard";
+    return "normal";
+  };
+
+  const getDisplayTimes = (employee, record) => {
+    if (getCategory(employee) !== "standard") {
+      return {
+        checkIn: record.checkIn,
+        checkOut: record.checkOut,
+      };
+    }
+
+    const shouldRound =
+      record.lateMinutes === 0 && record.earlyLeaveMinutes === 0 && record.overtimeMinutes === 0;
+
+    if (!shouldRound) {
+      return { checkIn: record.checkIn, checkOut: record.checkOut };
+    }
+
+    const checkInMinutes = parseMinutes(record.checkIn);
+    const checkOutMinutes = parseMinutes(record.checkOut);
+
+    return {
+      checkIn:
+        checkInMinutes >= parseMinutes("08:00") && checkInMinutes <= parseMinutes("10:00")
+          ? "09:00"
+          : record.checkIn,
+      checkOut: checkOutMinutes > parseMinutes("18:00") ? "18:00" : record.checkOut,
+    };
+  };
+
+  const enrichedRecords = useMemo(
+    () =>
+      attendanceRecords
+        .map((record) => {
+          const employee = employees.find((item) => item.id === record.employeeId);
+          if (!employee) return null;
+          const areaLabel = getAreaLabel(employee);
+          const displayTimes = getDisplayTimes(employee, record);
+          return {
+            ...record,
+            employee,
+            areaLabel,
+            category: getCategory(employee),
+            displayCheckIn: displayTimes.checkIn,
+            displayCheckOut: displayTimes.checkOut,
+            displayDuration: getWorkedDuration(displayTimes.checkIn, displayTimes.checkOut),
+          };
+        })
+        .filter(Boolean),
+    [attendanceRecords, employees],
+  );
+
+  const filteredRecords = useMemo(() => {
+    const filtered = enrichedRecords.filter((record) => {
+      if (record.category !== activeTab) return false;
+      if (filters.fromDate && record.date < filters.fromDate) return false;
+      if (filters.toDate && record.date > filters.toDate) return false;
+      if (filters.internalId && !record.employee.internalId.toLowerCase().includes(filters.internalId.toLowerCase())) return false;
+      if (filters.fullName && !record.employee.fullName.toLowerCase().includes(filters.fullName.toLowerCase())) return false;
+      if (filters.fin && !record.employee.fin.toLowerCase().includes(filters.fin.toLowerCase())) return false;
+      if (filters.position && !record.employee.position.toLowerCase().includes(filters.position.toLowerCase())) return false;
+      if (filters.department && !record.employee.department.toLowerCase().includes(filters.department.toLowerCase())) return false;
+      if (filters.area && !record.areaLabel.toLowerCase().includes(filters.area.toLowerCase())) return false;
+      return true;
+    });
+
+    return [...filtered].sort((left, right) => {
+      const leftValue =
+        sortField === "internalId"
+          ? left.employee.internalId
+          : sortField === "fullName"
+            ? left.employee.fullName
+            : sortField === "fin"
+              ? left.employee.fin
+              : sortField === "department"
+                ? left.employee.department
+                : sortField === "position"
+                  ? left.employee.position
+                  : sortField === "area"
+                    ? left.areaLabel
+                    : sortField === "checkIn"
+                      ? left.displayCheckIn
+                      : sortField === "checkOut"
+                        ? left.displayCheckOut
+                        : sortField === "duration"
+                          ? left.displayDuration
+                          : sortField === "method"
+                            ? left.recognitionMethod
+                            : left.date;
+
+      const rightValue =
+        sortField === "internalId"
+          ? right.employee.internalId
+          : sortField === "fullName"
+            ? right.employee.fullName
+            : sortField === "fin"
+              ? right.employee.fin
+              : sortField === "department"
+                ? right.employee.department
+                : sortField === "position"
+                  ? right.employee.position
+                  : sortField === "area"
+                    ? right.areaLabel
+                    : sortField === "checkIn"
+                      ? right.displayCheckIn
+                      : sortField === "checkOut"
+                        ? right.displayCheckOut
+                        : sortField === "duration"
+                          ? right.displayDuration
+                          : sortField === "method"
+                            ? right.recognitionMethod
+                            : right.date;
+
+      const compare = String(leftValue).localeCompare(String(rightValue), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+
+      return sortDirection === "asc" ? compare : compare * -1;
+    });
+  }, [activeTab, enrichedRecords, filters, sortDirection, sortField]);
+
+  const exportAttendance = () => {
+    const header = [
+      "ID",
+      "Photo",
+      "Full Name",
+      "FIN",
+      "Department",
+      "Position",
+      "Area",
+      "Date",
+      "Check In",
+      "Check Out",
+      "Worked Duration",
+      "Recognition Method",
+    ];
+    const rows = filteredRecords.map((record) => [
+      record.employee.internalId,
+      record.recognitionMethod === "face" ? "Face Capture" : "-",
+      record.employee.fullName,
+      record.employee.fin,
+      record.employee.department,
+      record.employee.position,
+      record.areaLabel,
+      record.date,
+      record.displayCheckIn,
+      record.displayCheckOut,
+      record.displayDuration,
+      record.recognitionMethod,
+    ]);
+    downloadCsv(`attendance-${activeTab}.csv`, header, rows);
+  };
+
+  return (
+    <div className="mx-auto max-w-[1540px]">
+      <div className="mb-8 flex items-start justify-between gap-6">
+        <div>
+          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-navy">
+            {t("attendance.title", "Attendance Reports")}
+          </h1>
+          <p className="mt-1.5 text-sm font-medium text-navy/50">
+            {t(
+              "attendance.subtitle",
+              "Shift-based attendance reports with filters, recognition details, and export support",
+            )}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <MetaChip>
+            {filteredRecords.length} {t("attendance.records", "records")}
+          </MetaChip>
+          <button
+            onClick={exportAttendance}
+            className="inline-flex items-center gap-2 rounded-xl bg-purple px-5 py-2.5 text-sm font-semibold text-white shadow-purple transition hover:bg-purple/90"
+          >
+            <DownloadCloudIcon className="h-4 w-4" />
+            {t("attendance.export", "Export Excel")}
+          </button>
+        </div>
+      </div>
+
+      <div className="mb-4 rounded-2xl border border-navy/[0.05] bg-white p-4 shadow-sm">
+        <div className="mb-4 flex items-center gap-3">
+          {attendanceTabs.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => onTabChange?.(tab.key)}
+              className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                activeTab === tab.key
+                  ? "bg-purple text-white shadow-purple"
+                  : "bg-surface text-navy hover:bg-purple/10 hover:text-purple"
+              }`}
+            >
+              {t(`attendance.tabs.${tab.key}`, tab.label)}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-4 gap-3">
+          <input type="date" value={filters.fromDate} onChange={(event) => setFilters((current) => ({ ...current, fromDate: event.target.value }))} className={`${fieldInputClass} bg-surface`} />
+          <input type="date" value={filters.toDate} onChange={(event) => setFilters((current) => ({ ...current, toDate: event.target.value }))} className={`${fieldInputClass} bg-surface`} />
+          <input value={filters.internalId} onChange={(event) => setFilters((current) => ({ ...current, internalId: event.target.value }))} placeholder="Search ID" className={`${fieldInputClass} bg-surface`} />
+          <input value={filters.fullName} onChange={(event) => setFilters((current) => ({ ...current, fullName: event.target.value }))} placeholder="Search full name" className={`${fieldInputClass} bg-surface`} />
+          <input value={filters.fin} onChange={(event) => setFilters((current) => ({ ...current, fin: event.target.value }))} placeholder="Search FIN" className={`${fieldInputClass} bg-surface`} />
+          <input value={filters.position} onChange={(event) => setFilters((current) => ({ ...current, position: event.target.value }))} placeholder="Search position" className={`${fieldInputClass} bg-surface`} />
+          <input value={filters.department} onChange={(event) => setFilters((current) => ({ ...current, department: event.target.value }))} placeholder="Search department" className={`${fieldInputClass} bg-surface`} />
+          <input value={filters.area} onChange={(event) => setFilters((current) => ({ ...current, area: event.target.value }))} placeholder="Search area" className={`${fieldInputClass} bg-surface`} />
+        </div>
+      </div>
+
+      <DataGrid minWidth={1940}>
+        <DataGridHeader columnsTemplate="120px 90px 180px 120px 150px 170px 240px 120px 120px 120px 140px 180px">
+              <SortableHeader label="ID" field="internalId" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
+              <span>Shekil</span>
+              <SortableHeader label="Ad Soyad" field="fullName" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
+              <SortableHeader label="FIN" field="fin" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
+              <SortableHeader label="Depart" field="department" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
+              <SortableHeader label="Vezife" field="position" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
+              <SortableHeader label="Area" field="area" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
+              <SortableHeader label="Tarix" field="date" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
+              <SortableHeader label="Giris" field="checkIn" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
+              <SortableHeader label="Cixis" field="checkOut" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
+              <SortableHeader label="Islediyi Muddet" field="duration" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
+              <SortableHeader label="Tanima Metodu" field="method" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
+        </DataGridHeader>
+
+            {filteredRecords.map((record) => (
+              <DataGridRow
+                key={record.id}
+                columnsTemplate="120px 90px 180px 120px 150px 170px 240px 120px 120px 120px 140px 180px"
+              >
+                <span className="font-semibold">{record.employee.internalId}</span>
+                <div>
+                  {record.recognitionMethod === "face" ? (
+                    <button
+                      onClick={() =>
+                        setPreviewImage({
+                          title: `${record.employee.fullName} - ${record.date}`,
+                          employeeName: record.employee.fullName,
+                          captures: [
+                            {
+                              title: t("attendance.preview.checkIn", "Check-in capture"),
+                              src: record.employee.photoDataUrl || "",
+                              capturedAt: formatAttendanceCapture(record.date, record.displayCheckIn, language),
+                            },
+                            {
+                              title: t("attendance.preview.checkOut", "Check-out capture"),
+                              src: record.employee.photoDataUrl || "",
+                              capturedAt: formatAttendanceCapture(record.date, record.displayCheckOut, language),
+                            },
+                          ],
+                        })
+                      }
+                      className="group relative flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-purple/20 bg-purple/10 text-purple transition hover:border-purple"
+                    >
+                      {record.employee.photoDataUrl ? (
+                        <>
+                          <img src={record.employee.photoDataUrl} alt={record.employee.fullName} className="h-12 w-12 object-cover" />
+                          <div className="absolute inset-0 flex items-center justify-center bg-navy/45 opacity-0 transition group-hover:opacity-100">
+                            <EyeIcon className="h-4 w-4 text-white" />
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <CameraIcon className="h-5 w-5" />
+                          <div className="absolute inset-0 flex items-center justify-center bg-navy/45 opacity-0 transition group-hover:opacity-100">
+                            <EyeIcon className="h-4 w-4 text-white" />
+                          </div>
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-surface text-xs font-semibold text-navy/35">
+                      -
+                    </div>
+                  )}
+                </div>
+                <span className="font-semibold">{record.employee.fullName}</span>
+                <span>{record.employee.fin}</span>
+                <button
+                  onClick={() => applyQuickFilter("department", record.employee.department)}
+                  className="text-left text-purple transition hover:text-purple/80 hover:underline"
+                >
+                  {record.employee.department}
+                </button>
+                <button
+                  onClick={() => applyQuickFilter("position", record.employee.position)}
+                  className="text-left text-purple transition hover:text-purple/80 hover:underline"
+                >
+                  {record.employee.position}
+                </button>
+                <button
+                  onClick={() => applyQuickFilter("area", record.areaLabel)}
+                  className="text-left text-xs text-purple transition hover:text-purple/80 hover:underline"
+                >
+                  {record.areaLabel}
+                </button>
+                <span>{record.date}</span>
+                <span>{record.displayCheckIn}</span>
+                <span>{record.displayCheckOut}</span>
+                <span className="font-semibold">{record.displayDuration}</span>
+                <div className="flex items-center gap-3">
+                  <div className="inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-xs font-semibold text-navy">
+                    {record.recognitionMethod === "face" ? (
+                      <FaceIcon className="h-3.5 w-3.5" />
+                    ) : record.recognitionMethod === "card" ? (
+                      <CardIcon className="h-3.5 w-3.5" />
+                    ) : (
+                      <FingerprintIcon className="h-3.5 w-3.5" />
+                    )}
+                    {record.recognitionMethod}
+                  </div>
+                </div>
+              </DataGridRow>
+            ))}
+
+            {filteredRecords.length === 0 ? (
+              <div className="px-6 py-12 text-center text-sm font-medium text-navy/45">
+                No attendance records matched the current filters.
+              </div>
+            ) : null}
+      </DataGrid>
+
+      {previewImage ? (
+        <>
+          <div className="drawer-overlay fixed inset-0 z-40" onClick={() => setPreviewImage(null)} />
+          <div className="fixed left-1/2 top-1/2 z-50 w-[920px] max-w-[calc(100vw-48px)] -translate-x-1/2 -translate-y-1/2 rounded-[28px] bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="text-lg font-bold text-navy">{previewImage.title}</div>
+              <button onClick={() => setPreviewImage(null)} className="flex h-10 w-10 items-center justify-center rounded-xl transition hover:bg-surface">
+                <CloseIcon className="h-5 w-5 text-navy/50" />
+              </button>
+            </div>
+            <div className="grid gap-5 md:grid-cols-2">
+              {previewImage.captures.map((capture) => (
+                <div key={capture.title} className="rounded-[24px] border border-navy/[0.06] bg-surface/50 p-4">
+                  <div className="mb-3">
+                    <div className="text-sm font-bold text-navy">{capture.title}</div>
+                    <div className="mt-1 text-xs font-medium text-navy/45">
+                      {t("attendance.preview.capturedAt", "Captured at")}: {capture.capturedAt}
+                    </div>
+                  </div>
+                  {capture.src ? (
+                    <img src={capture.src} alt={previewImage.title} className="h-[420px] w-full rounded-[20px] object-cover" />
+                  ) : (
+                    <div className="flex h-[420px] w-full items-center justify-center rounded-[20px] border border-purple/15 bg-gradient-to-br from-purple/10 via-white to-surface">
+                      <div className="flex flex-col items-center gap-4 text-center text-purple">
+                        <div className="flex h-24 w-24 items-center justify-center rounded-[24px] border border-purple/20 bg-white shadow-sm">
+                          <CameraIcon className="h-10 w-10" />
+                        </div>
+                        <div>
+                          <div className="text-lg font-bold text-navy">{previewImage.employeeName}</div>
+                          <div className="mt-1 text-sm font-medium text-navy/45">
+                            {t(
+                              "attendance.preview.empty",
+                              "No captured face image is available for this record",
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -3562,6 +4729,8 @@ function TabelPage({ rows }) {
 function TabelArchivePage({ archives }) {
   const [selectedYear, setSelectedYear] = useState(tabelBrowserYears[0]);
   const [selectedMonthKey, setSelectedMonthKey] = useState(archives[tabelBrowserYears[0]][0].key);
+  const [companyLogo, setCompanyLogo] = useState("");
+  const logoInputRef = useRef(null);
 
   const months = archives[selectedYear] || [];
   const selectedMonth = months.find((month) => month.key === selectedMonthKey) || months[0];
@@ -3586,26 +4755,35 @@ function TabelArchivePage({ archives }) {
     setSelectedMonthKey(event.target.value);
   };
 
+  const handleLogoFile = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setCompanyLogo(String(reader.result || ""));
+    reader.readAsDataURL(file);
+  };
+
   const exportToExcel = () => {
     if (!selectedMonth) return;
-    const header = ["No", "FIN", "A.S.A", "Vezife", ...days.map(String), "Is gunu sayi", "Is saatlari"];
+    const header = ["S/S", "FIN kod", "Soyadı, adı, atasının adı", "Vəzifəsi", ...days.map(String), "İş günlərinin sayı", "İş saatlarının cəmi"];
     const body = rows.map((row) => [
       row.rowNumber,
       row.fin,
       row.employeeName,
       row.position,
-      ...row.dailyHours,
+      ...row.dailyHours.map((value) => normalizeTabelCode(value)),
       row.workDayCount,
       row.workHours.toFixed(2),
     ]);
-    const csv = [header, ...body].map((line) => line.map((cell) => `"${cell}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `tabel-${selectedYear}-${selectedMonth.key}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    const metadata = [
+      ["Müəssisə / idarə / təşkilat", companyLogo ? "Company logo attached in UI" : "Logo not attached"],
+      ["Sənəd", "TABEL"],
+      ["Tarix aralığı", selectedMonth.rangeLabel],
+      ["Təsdiq edirəm", "______________________________"],
+      [],
+    ];
+    const legendRows = [["Qeydlərin izahı"], ...correctedTabelLegendItems.map((item) => [item]), [], ["Ümumi saat cəmi", totalHours.toFixed(2)]];
+    downloadCsv(`tabel-${selectedYear}-${selectedMonth.key}.csv`, metadata[0], [...metadata.slice(1), header, ...body, ...legendRows]);
   };
 
   return (
@@ -3614,7 +4792,7 @@ function TabelArchivePage({ archives }) {
         <div>
           <h1 className="text-[28px] font-bold leading-tight tracking-tight text-navy">Tabel</h1>
           <p className="mt-1.5 text-sm font-medium text-navy/50">
-            FIN kodu, gunluk is saatlari ve ayliq tabel arxivi
+            FIN kodu, günlük iş saatları və aylıq tabel arxivi
           </p>
         </div>
 
@@ -3637,7 +4815,7 @@ function TabelArchivePage({ archives }) {
           <div className="space-y-4">
             <div>
               <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-navy/40">
-                Il
+                İl
               </label>
               <select
                 value={selectedYear}
@@ -3670,35 +4848,47 @@ function TabelArchivePage({ archives }) {
             </div>
 
             <div className="rounded-2xl border border-purple/10 bg-purple/5 p-4">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-navy/40">Secilmis arxiv</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-navy/40">Seçilmiş arxiv</div>
               <div className="mt-2 text-base font-bold text-navy">
                 {selectedMonth?.monthLabel || "Arxiv yoxdur"}
               </div>
               <div className="mt-1 text-sm text-navy/55">
-                {rows.length} isci, {days.length} gun
+                {rows.length} işçi, {days.length} gün
               </div>
             </div>
 
             <div className="rounded-2xl border border-navy/10 bg-surface/50 p-4 text-sm font-medium text-navy/65">
-              Ay secdikce tabel avtomatik yenilenir. Genis cedveli saga surusdurmek ucun asagidaki hissede horizontal scroll var.
+              Ay seçdikcə tabel avtomatik yenilənir. Geniş cədvəli sağa sürüşdürmək üçün aşağı hissədə horizontal scroll var.
             </div>
           </div>
         </div>
 
         <div className="min-w-0 rounded-[24px] border border-navy/[0.05] bg-white p-5 shadow-sm">
           <div className="mb-5 grid grid-cols-3 gap-4">
-            <div className="rounded-2xl border border-navy/10 bg-surface/50 px-5 py-4">
-              <div className="text-xs font-medium text-navy/40">(muessisenin, idarenin ve teskilatin adi)</div>
-            </div>
+            <button
+              type="button"
+              onClick={() => logoInputRef.current?.click()}
+              className="flex min-h-[82px] items-center justify-center overflow-hidden rounded-2xl border border-dashed border-purple/25 bg-surface/50 px-5 py-4 transition hover:border-purple hover:bg-purple/5"
+            >
+              {companyLogo ? (
+                <img src={companyLogo} alt="Company logo" className="max-h-14 max-w-full object-contain" />
+              ) : (
+                <div className="text-center">
+                  <div className="text-xs font-medium text-navy/40">(müəssisənin, idarənin və təşkilatın adı / logo)</div>
+                  <div className="mt-2 text-sm font-semibold text-purple">Logo yüklə</div>
+                </div>
+              )}
+            </button>
             <div className="rounded-2xl border border-navy/10 bg-surface/50 px-5 py-4 text-center">
               <div className="text-base font-bold text-navy">TABEL</div>
               <div className="mt-1 text-sm text-navy/60">{selectedMonth?.rangeLabel}</div>
             </div>
             <div className="rounded-2xl border border-navy/10 bg-surface/50 px-5 py-4 text-right">
-              <div className="text-sm font-semibold text-navy">TESDIQ EDIREM:</div>
+              <div className="text-sm font-semibold text-navy">TƏSDİQ EDİRƏM:</div>
               <div className="mt-4 h-px bg-navy/20" />
             </div>
           </div>
+          <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoFile} className="hidden" />
 
           <div className="overflow-x-auto overflow-y-hidden pb-3">
             <table className="min-w-[2600px] border-collapse text-center text-[12px] text-navy">
@@ -3706,11 +4896,11 @@ function TabelArchivePage({ archives }) {
                 <tr className="bg-surface/70">
                   <th className="border border-navy/10 px-2 py-3 font-bold" rowSpan={2}>s/s</th>
                   <th className="border border-navy/10 px-3 py-3 font-bold" rowSpan={2}>FIN kod</th>
-                  <th className="border border-navy/10 px-3 py-3 font-bold" rowSpan={2}>Soyadi, adi, atasinin adi</th>
-                  <th className="border border-navy/10 px-3 py-3 font-bold" rowSpan={2}>Vezifesi</th>
-                  <th className="border border-navy/10 px-3 py-3 font-bold" colSpan={days.length}>Ayin gunleri</th>
-                  <th className="border border-navy/10 px-3 py-3 font-bold" rowSpan={2}>Is gunlerinin sayi</th>
-                  <th className="border border-navy/10 px-3 py-3 font-bold" rowSpan={2}>Is saatlarinin cemi</th>
+                  <th className="border border-navy/10 px-3 py-3 font-bold" rowSpan={2}>Soyadı, adı, atasının adı</th>
+                  <th className="border border-navy/10 px-3 py-3 font-bold" rowSpan={2}>Vəzifəsi</th>
+                  <th className="border border-navy/10 px-3 py-3 font-bold" colSpan={days.length}>Ayın günləri</th>
+                  <th className="border border-navy/10 px-3 py-3 font-bold" rowSpan={2}>İş günlərinin sayı</th>
+                  <th className="border border-navy/10 px-3 py-3 font-bold" rowSpan={2}>İş saatlarının cəmi</th>
                 </tr>
                 <tr className="bg-surface/70">
                   {days.map((day) => (
@@ -3725,11 +4915,14 @@ function TabelArchivePage({ archives }) {
                     <td className="border border-navy/10 px-3 py-3 font-semibold">{row.fin}</td>
                     <td className="border border-navy/10 px-3 py-3 text-left font-semibold">{row.employeeName}</td>
                     <td className="border border-navy/10 px-3 py-3 text-left">{row.position}</td>
-                    {row.dailyHours.map((dayValue, index) => (
+                    {row.dailyHours.map((rawDayValue, index) => {
+                      const dayValue = normalizeTabelCode(rawDayValue);
+                      return (
                       <td
                         key={`${row.id}-${index + 1}`}
                         className={`border border-navy/10 px-2 py-3 ${
                           dayValue === "Q/I"
+                            || dayValue === "Q/İ"
                             ? "bg-yellow/10 font-semibold text-yellow-700"
                             : dayValue === "i"
                               ? "text-navy/50"
@@ -3737,12 +4930,12 @@ function TabelArchivePage({ archives }) {
                                 ? "font-semibold text-red-500"
                                 : /^[0-9]/.test(dayValue)
                                   ? "font-semibold text-navy"
-                                  : "font-semibold text-purple"
+                                : "font-semibold text-purple"
                         }`}
                       >
                         {dayValue}
                       </td>
-                    ))}
+                    )})}
                     <td className="border border-navy/10 px-3 py-3 font-semibold">{row.workDayCount}</td>
                     <td className="border border-navy/10 px-3 py-3 font-semibold">{row.workHours.toFixed(2)}</td>
                   </tr>
@@ -3752,13 +4945,268 @@ function TabelArchivePage({ archives }) {
           </div>
 
           <div className="mt-6 rounded-2xl border border-navy/10 bg-surface/40 p-5">
-            <div className="mb-3 text-sm font-bold uppercase tracking-[0.18em] text-navy/40">Qeydlerin izahi</div>
+            <div className="mb-3 text-sm font-bold uppercase tracking-[0.18em] text-navy/40">Qeydlərin izahı</div>
             <div className="grid grid-cols-2 gap-3 text-sm font-medium text-navy/70">
-              {tabelBrowserLegend.map((item) => (
+              {correctedTabelLegendItems.map((item) => (
                 <div key={item}>{item}</div>
               ))}
             </div>
-            <div className="mt-4 text-sm font-semibold text-navy">Umumi saat cemi: {totalHours.toFixed(2)}</div>
+            <div className="mt-4 text-sm font-semibold text-navy">Ümumi saat cəmi: {totalHours.toFixed(2)}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TabelArchivePageV2({ archives }) {
+  const [selectedYear, setSelectedYear] = useState(tabelBrowserYears[0]);
+  const [selectedMonthKey, setSelectedMonthKey] = useState(archives[tabelBrowserYears[0]][0].key);
+  const [companyLogo, setCompanyLogo] = useState("");
+  const logoInputRef = useRef(null);
+
+  const months = archives[selectedYear] || [];
+  const selectedMonth = months.find((month) => month.key === selectedMonthKey) || months[0];
+  const rows = selectedMonth?.rows || [];
+  const totalHours = rows.reduce((sum, row) => sum + row.workHours, 0);
+  const days = createTabelDayList(selectedMonth?.dayCount || 31);
+
+  useEffect(() => {
+    if (!months.some((month) => month.key === selectedMonthKey)) {
+      setSelectedMonthKey(months[0]?.key || "");
+    }
+  }, [months, selectedMonthKey]);
+
+  const handleLogoFile = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setCompanyLogo(String(reader.result || ""));
+    reader.readAsDataURL(file);
+  };
+
+  const exportToExcel = () => {
+    if (!selectedMonth) return;
+
+    const header = [
+      "S/S",
+      "FIN kod",
+      "Soyadı, adı, atasının adı",
+      "Vəzifəsi",
+      ...days.map(String),
+      "İş günlərinin sayı",
+      "İş saatlarının cəmi",
+    ];
+
+    const body = rows.map((row) => [
+      row.rowNumber,
+      row.fin,
+      row.employeeName,
+      row.position,
+      ...row.dailyHours.map((value) => normalizeTabelCode(value)),
+      row.workDayCount,
+      row.workHours.toFixed(2),
+    ]);
+
+    downloadCsv(`tabel-${selectedYear}-${selectedMonth.key}.csv`, [], [
+      ["Müəssisə / idarə / təşkilat", companyLogo ? "Logo attached in UI" : "Logo not attached"],
+      ["Sənəd", "TABEL"],
+      ["Tarix aralığı", selectedMonth.rangeLabel],
+      ["Təsdiq edirəm", "______________________________"],
+      [],
+      header,
+      ...body,
+      [],
+      ["Qeydlərin izahı"],
+      ...correctedTabelLegendItems.map((item) => [item]),
+      [],
+      ["Ümumi saat cəmi", totalHours.toFixed(2)],
+    ]);
+  };
+
+  return (
+    <div className="mx-auto max-w-[1640px]">
+      <div className="mb-8 flex items-start justify-between gap-6">
+        <div>
+          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-navy">Tabel</h1>
+          <p className="mt-1.5 text-sm font-medium text-navy/50">
+            FIN kodu, günlük iş saatları və aylıq tabel arxivi
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <MetaChip>{rows.length} employees</MetaChip>
+          <MetaChip>{selectedMonth?.monthLabel}</MetaChip>
+          <button
+            onClick={exportToExcel}
+            className="inline-flex items-center gap-2 rounded-xl bg-purple px-5 py-2.5 text-sm font-semibold text-white shadow-purple transition hover:bg-purple/90"
+          >
+            <DownloadCloudIcon className="h-4 w-4" />
+            Export Excel
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-[240px_1fr] gap-5">
+        <div className="rounded-[24px] border border-navy/[0.05] bg-white p-5 shadow-sm">
+          <div className="mb-4 text-sm font-bold uppercase tracking-[0.18em] text-navy/40">Arxiv</div>
+          <div className="space-y-4">
+            <div>
+              <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-navy/40">
+                İl
+              </label>
+              <select
+                value={selectedYear}
+                onChange={(event) => {
+                  const nextYear = event.target.value;
+                  const nextMonths = archives[nextYear] || [];
+                  setSelectedYear(nextYear);
+                  setSelectedMonthKey(nextMonths[0]?.key || "");
+                }}
+                className="w-full rounded-xl border border-navy/10 bg-surface px-4 py-3 text-sm font-semibold text-navy outline-none transition focus:border-purple focus:bg-white"
+              >
+                {tabelBrowserYears.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-navy/40">
+                Ay
+              </label>
+              <select
+                value={selectedMonth?.key || ""}
+                onChange={(event) => setSelectedMonthKey(event.target.value)}
+                className="w-full rounded-xl border border-navy/10 bg-surface px-4 py-3 text-sm font-semibold text-navy outline-none transition focus:border-purple focus:bg-white"
+              >
+                {months.map((month) => (
+                  <option key={month.key} value={month.key}>
+                    {month.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="rounded-2xl border border-purple/10 bg-purple/5 p-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-navy/40">
+                Seçilmiş arxiv
+              </div>
+              <div className="mt-2 text-base font-bold text-navy">
+                {selectedMonth?.monthLabel || "Arxiv yoxdur"}
+              </div>
+              <div className="mt-1 text-sm text-navy/55">
+                {rows.length} işçi, {days.length} gün
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-navy/10 bg-surface/50 p-4 text-sm font-medium text-navy/65">
+              Ay seçdikcə tabel avtomatik yenilənir. Geniş cədvəli sağa sürüşdürmək üçün aşağı hissədə horizontal scroll var.
+            </div>
+          </div>
+        </div>
+
+        <div className="min-w-0 rounded-[24px] border border-navy/[0.05] bg-white p-5 shadow-sm">
+          <div className="mb-5 grid grid-cols-3 gap-4">
+            <button
+              type="button"
+              onClick={() => logoInputRef.current?.click()}
+              className="flex min-h-[82px] items-center justify-center overflow-hidden rounded-2xl border border-dashed border-purple/25 bg-surface/50 px-5 py-4 transition hover:border-purple hover:bg-purple/5"
+            >
+              {companyLogo ? (
+                <img src={companyLogo} alt="Company logo" className="max-h-14 max-w-full object-contain" />
+              ) : (
+                <div className="text-center">
+                  <div className="text-xs font-medium text-navy/40">
+                    (müəssisənin, idarənin və təşkilatın adı / logo)
+                  </div>
+                  <div className="mt-2 text-sm font-semibold text-purple">Logo yüklə</div>
+                </div>
+              )}
+            </button>
+            <div className="rounded-2xl border border-navy/10 bg-surface/50 px-5 py-4 text-center">
+              <div className="text-base font-bold text-navy">TABEL</div>
+              <div className="mt-1 text-sm text-navy/60">{selectedMonth?.rangeLabel}</div>
+            </div>
+            <div className="rounded-2xl border border-navy/10 bg-surface/50 px-5 py-4 text-right">
+              <div className="text-sm font-semibold text-navy">TƏSDİQ EDİRƏM:</div>
+              <div className="mt-4 h-px bg-navy/20" />
+            </div>
+          </div>
+
+          <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoFile} className="hidden" />
+
+          <div className="overflow-x-auto overflow-y-hidden pb-3">
+            <table className="min-w-[2600px] border-collapse text-center text-[12px] text-navy">
+              <thead>
+                <tr className="bg-surface/70">
+                  <th className="border border-navy/10 px-2 py-3 font-bold" rowSpan={2}>s/s</th>
+                  <th className="border border-navy/10 px-3 py-3 font-bold" rowSpan={2}>FIN kod</th>
+                  <th className="border border-navy/10 px-3 py-3 font-bold" rowSpan={2}>Soyadı, adı, atasının adı</th>
+                  <th className="border border-navy/10 px-3 py-3 font-bold" rowSpan={2}>Vəzifəsi</th>
+                  <th className="border border-navy/10 px-3 py-3 font-bold" colSpan={days.length}>Ayın günləri</th>
+                  <th className="border border-navy/10 px-3 py-3 font-bold" rowSpan={2}>İş günlərinin sayı</th>
+                  <th className="border border-navy/10 px-3 py-3 font-bold" rowSpan={2}>İş saatlarının cəmi</th>
+                </tr>
+                <tr className="bg-surface/70">
+                  {days.map((day) => (
+                    <th key={day} className="border border-navy/10 px-2 py-3 font-bold">
+                      {day}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.id} className="bg-white">
+                    <td className="border border-navy/10 px-2 py-3 font-semibold">{row.rowNumber}</td>
+                    <td className="border border-navy/10 px-3 py-3 font-semibold">{row.fin}</td>
+                    <td className="border border-navy/10 px-3 py-3 text-left font-semibold">{row.employeeName}</td>
+                    <td className="border border-navy/10 px-3 py-3 text-left">{row.position}</td>
+                    {row.dailyHours.map((rawDayValue, index) => {
+                      const dayValue = normalizeTabelCode(rawDayValue);
+                      return (
+                        <td
+                          key={`${row.id}-${index + 1}`}
+                          className={`border border-navy/10 px-2 py-3 ${
+                            dayValue === "Q/I" || dayValue === "Q/İ"
+                              ? "bg-yellow/10 font-semibold text-yellow-700"
+                              : dayValue === "i"
+                                ? "text-navy/50"
+                                : dayValue === "0"
+                                  ? "font-semibold text-red-500"
+                                  : /^[0-9]/.test(dayValue)
+                                    ? "font-semibold text-navy"
+                                    : "font-semibold text-purple"
+                          }`}
+                        >
+                          {dayValue}
+                        </td>
+                      );
+                    })}
+                    <td className="border border-navy/10 px-3 py-3 font-semibold">{row.workDayCount}</td>
+                    <td className="border border-navy/10 px-3 py-3 font-semibold">{row.workHours.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-navy/10 bg-surface/40 p-5">
+            <div className="mb-3 text-sm font-bold uppercase tracking-[0.18em] text-navy/40">
+              Qeydlərin izahı
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-sm font-medium text-navy/70">
+              {correctedTabelLegendItems.map((item) => (
+                <div key={item}>{item}</div>
+              ))}
+            </div>
+            <div className="mt-4 text-sm font-semibold text-navy">
+              Ümumi saat cəmi: {totalHours.toFixed(2)}
+            </div>
           </div>
         </div>
       </div>
@@ -3781,6 +5229,7 @@ function EmployeeWizardPage({
   positionOptions = [],
   devices = [],
 }) {
+  const { t } = useI18n();
   const setField = (field, value) => onChange((current) => ({ ...current, [field]: value }));
 
   const markVisited = (stepNumber) => {
@@ -3819,7 +5268,7 @@ function EmployeeWizardPage({
         className="mb-5 inline-flex items-center gap-2 rounded-xl border border-navy/10 bg-white px-4 py-2 text-sm font-semibold text-navy transition hover:border-purple/20 hover:text-purple"
       >
         <ArrowLeftIcon className="h-4 w-4" />
-        Go Back
+        {t("wizard.back", "Go Back")}
       </button>
 
       <div className="rounded-[28px] border border-navy/[0.05] bg-white p-8 shadow-sm">
@@ -3970,7 +5419,7 @@ function EmployeeWizardPage({
 
                   <div className="rounded-2xl border border-navy/10 bg-white p-5">
                     <div className="mb-4">
-                      <div className="text-sm font-semibold text-navy">Photo Upload</div>
+                      <div className="text-sm font-semibold text-navy">{t("wizard.photoUpload", "Photo Upload")}</div>
                       <div className="mt-1 text-xs text-navy/45">Employee sekli bu addimda access melumatlari ile birlikde elave olunur.</div>
                     </div>
 
@@ -3983,8 +5432,8 @@ function EmployeeWizardPage({
                             <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-purple/10 text-purple">
                               <CameraIcon className="h-8 w-8" />
                             </div>
-                            <div className="text-sm font-semibold text-navy">No photo selected</div>
-                            <div className="mt-1 text-xs text-navy/45">Large square preview appears here</div>
+                            <div className="text-sm font-semibold text-navy">{t("wizard.noPhoto", "No photo selected")}</div>
+                            <div className="mt-1 text-xs text-navy/45">{t("wizard.photoHint", "Large square preview appears here")}</div>
                           </div>
                         )}
                       </div>
@@ -4000,8 +5449,8 @@ function EmployeeWizardPage({
                               <CameraIcon className="h-5 w-5" />
                             </div>
                             <div>
-                              <div className="text-sm font-semibold text-navy">Capture from Device</div>
-                              <div className="mt-1 text-xs text-navy/45">Use device camera when available.</div>
+                              <div className="text-sm font-semibold text-navy">{t("wizard.capture", "Capture from Device")}</div>
+                              <div className="mt-1 text-xs text-navy/45">{t("wizard.captureHint", "Use device camera when available.")}</div>
                             </div>
                           </div>
                           <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(event) => handlePhotoFile(event.target.files?.[0])} />
@@ -4013,8 +5462,8 @@ function EmployeeWizardPage({
                               <UploadIcon className="h-5 w-5" />
                             </div>
                             <div>
-                              <div className="text-sm font-semibold text-navy">Upload from Computer</div>
-                              <div className="mt-1 text-xs text-navy/45">Select JPG or PNG from local storage.</div>
+                              <div className="text-sm font-semibold text-navy">{t("wizard.upload", "Upload from Computer")}</div>
+                              <div className="mt-1 text-xs text-navy/45">{t("wizard.uploadHint", "Select JPG or PNG from local storage.")}</div>
                             </div>
                           </div>
                           <input type="file" accept="image/*" className="hidden" onChange={(event) => handlePhotoFile(event.target.files?.[0])} />
@@ -4105,6 +5554,7 @@ function EmployeeDetailModal({
   onClose,
 }) {
   if (!employee) return null;
+  const { t } = useI18n();
 
   return (
     <>
@@ -4147,7 +5597,7 @@ function EmployeeDetailModal({
                   <Field label="Email"><input value={values.email} onChange={(e) => onChange((current) => ({ ...current, email: e.target.value }))} className={fieldInputClass} /></Field>
                   <div className="col-span-2">
                     <div className="rounded-2xl border border-navy/10 bg-surface/30 p-4">
-                      <div className="mb-3 text-sm font-semibold text-navy">Photo</div>
+                      <div className="mb-3 text-sm font-semibold text-navy">{t("common.photo", "Photo")}</div>
                       <div className="grid grid-cols-2 gap-3">
                         <label className="block cursor-pointer rounded-2xl border border-purple/20 bg-purple/10 p-4 transition hover:bg-purple/15">
                           <div className="flex items-center gap-3">
@@ -4155,8 +5605,8 @@ function EmployeeDetailModal({
                               <CameraIcon className="h-5 w-5" />
                             </div>
                             <div>
-                              <div className="text-sm font-semibold text-navy">Capture from Device</div>
-                              <div className="mt-1 text-xs text-navy/45">Use device camera when available.</div>
+                              <div className="text-sm font-semibold text-navy">{t("wizard.capture", "Capture from Device")}</div>
+                              <div className="mt-1 text-xs text-navy/45">{t("wizard.captureHint", "Use device camera when available.")}</div>
                             </div>
                           </div>
                           <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(event) => {
@@ -4177,8 +5627,8 @@ function EmployeeDetailModal({
                               <UploadIcon className="h-5 w-5" />
                             </div>
                             <div>
-                              <div className="text-sm font-semibold text-navy">Upload from Computer</div>
-                              <div className="mt-1 text-xs text-navy/45">Select JPG or PNG from local storage.</div>
+                              <div className="text-sm font-semibold text-navy">{t("wizard.upload", "Upload from Computer")}</div>
+                              <div className="mt-1 text-xs text-navy/45">{t("wizard.uploadHint", "Select JPG or PNG from local storage.")}</div>
                             </div>
                           </div>
                           <input type="file" accept="image/*" className="hidden" onChange={(event) => {
@@ -4200,7 +5650,7 @@ function EmployeeDetailModal({
               ) : (
                 <>
                   <div className="flex items-start justify-between gap-4 border-b border-navy/[0.06] py-3">
-                    <span className="text-sm font-semibold text-navy">My profile</span>
+                    <span className="text-sm font-semibold text-navy">{t("wizard.profile", "My profile")}</span>
                     <span className="text-xs font-medium text-navy/35">{employee.branchLocation || "HQ Office"}</span>
                   </div>
                   <KeyValueRow label="Full Name" value={employee.fullName} />
@@ -4574,6 +6024,178 @@ function TimetableFormModal({ isOpen, editing, values, onChange, onClose, onSubm
                 className="flex-1 rounded-xl bg-purple px-4 py-3 text-sm font-semibold text-white shadow-purple transition hover:bg-purple/90"
               >
                 {editing ? "Update Timetable" : "Save Timetable"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function HolidayFormModal({ isOpen, editing, values, onChange, departmentOptions, groupOptions = [], onClose, onSubmit }) {
+  if (!isOpen) return null;
+  const setField = (field, value) => onChange((current) => ({ ...current, [field]: value }));
+  const toggleScope = (scope) => {
+    onChange((current) => ({
+      ...current,
+      applyScopes: current.applyScopes.includes(scope)
+        ? current.applyScopes.filter((item) => item !== scope)
+        : [...current.applyScopes, scope],
+    }));
+  };
+  const toggleSelection = (field, value) => {
+    onChange((current) => ({
+      ...current,
+      [field]: current[field].includes(value)
+        ? current[field].filter((item) => item !== value)
+        : [...current[field], value],
+    }));
+  };
+
+  return (
+    <>
+      <div className="drawer-overlay fixed inset-0 z-40" onClick={onClose} />
+      <div className="fixed right-0 top-0 z-50 h-full w-[520px] animate-slideIn overflow-auto bg-white shadow-2xl">
+        <div className="p-8">
+          <div className="mb-8 flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold text-navy">{editing ? "Edit Holiday" : "Add Holiday"}</h2>
+              <p className="mt-1 text-xs text-navy/40">Apply official holiday rules company-wide or by department.</p>
+            </div>
+            <button onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl transition hover:bg-surface">
+              <CloseIcon className="h-5 w-5 text-navy/50" />
+            </button>
+          </div>
+
+          <form onSubmit={onSubmit} className="flex flex-col gap-6">
+            <Field label="Holiday Name">
+              <input value={values.name} onChange={(event) => setField("name", event.target.value)} placeholder="Novruz Bayramı" className={fieldInputClass} />
+            </Field>
+            <Field label="Description">
+              <textarea value={values.description} onChange={(event) => setField("description", event.target.value)} placeholder="Holiday description" className={`${fieldInputClass} min-h-[110px] resize-none`} />
+            </Field>
+            <Field label="Date">
+              <input type="date" value={values.date} onChange={(event) => setField("date", event.target.value)} className={fieldInputClass} />
+            </Field>
+            <Field label="Apply Scope">
+              <div className="grid gap-2">
+                {[
+                  { value: "company", label: "Bütün şirkət" },
+                  { value: "department", label: "Departament" },
+                  { value: "group", label: "Qrup" },
+                ].map((scope) => (
+                  <label key={scope.value} className="flex items-center gap-3 rounded-xl border border-navy/10 bg-surface px-4 py-3 text-sm font-medium text-navy">
+                    <input
+                      type="checkbox"
+                      checked={values.applyScopes.includes(scope.value)}
+                      onChange={() => toggleScope(scope.value)}
+                      className="h-4 w-4 rounded border-navy/20 text-purple focus:ring-purple"
+                    />
+                    <span>{scope.label}</span>
+                  </label>
+                ))}
+              </div>
+            </Field>
+            {values.applyScopes.includes("department") ? (
+              <Field label="Department">
+                <div className="max-h-40 space-y-2 overflow-auto rounded-2xl border border-navy/10 bg-white p-3">
+                  {departmentOptions.map((option) => (
+                    <label key={option} className="flex items-center gap-3 rounded-xl border border-navy/10 bg-surface px-3 py-2 text-sm font-medium text-navy">
+                      <input
+                        type="checkbox"
+                        checked={values.departmentNames.includes(option)}
+                        onChange={() => toggleSelection("departmentNames", option)}
+                        className="h-4 w-4 rounded border-navy/20 text-purple focus:ring-purple"
+                      />
+                      <span>{option}</span>
+                    </label>
+                  ))}
+                </div>
+              </Field>
+            ) : null}
+            {values.applyScopes.includes("group") ? (
+              <Field label="Group">
+                <div className="max-h-40 space-y-2 overflow-auto rounded-2xl border border-navy/10 bg-white p-3">
+                  {groupOptions.map((option) => (
+                    <label key={option} className="flex items-center gap-3 rounded-xl border border-navy/10 bg-surface px-3 py-2 text-sm font-medium text-navy">
+                      <input
+                        type="checkbox"
+                        checked={values.groupNames.includes(option)}
+                        onChange={() => toggleSelection("groupNames", option)}
+                        className="h-4 w-4 rounded border-navy/20 text-purple focus:ring-purple"
+                      />
+                      <span>{option}</span>
+                    </label>
+                  ))}
+                </div>
+              </Field>
+            ) : null}
+
+            <div className="mt-4 flex items-center gap-3 border-t border-navy/[0.06] pt-4">
+              <button type="button" onClick={onClose} className="flex-1 rounded-xl border-2 border-navy/10 px-4 py-3 text-sm font-semibold text-navy transition hover:border-navy/20 hover:bg-surface">
+                Cancel
+              </button>
+              <button type="submit" className="flex-1 rounded-xl bg-purple px-4 py-3 text-sm font-semibold text-white shadow-purple transition hover:bg-purple/90">
+                {editing ? "Update Holiday" : "Save Holiday"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function PermissionFormModal({ isOpen, editing, values, onChange, targetOptions, onClose, onSubmit }) {
+  if (!isOpen) return null;
+  const setField = (field, value) => onChange((current) => ({ ...current, [field]: value }));
+  const availableTargets = targetOptions[values.applyToType] || [];
+
+  return (
+    <>
+      <div className="drawer-overlay fixed inset-0 z-40" onClick={onClose} />
+      <div className="fixed right-0 top-0 z-50 h-full w-[520px] animate-slideIn overflow-auto bg-white shadow-2xl">
+        <div className="p-8">
+          <div className="mb-8 flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold text-navy">{editing ? "Edit Permission" : "Add Permission"}</h2>
+              <p className="mt-1 text-xs text-navy/40">Bind permission rules to employees, groups, positions, or departments.</p>
+            </div>
+            <button onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl transition hover:bg-surface">
+              <CloseIcon className="h-5 w-5 text-navy/50" />
+            </button>
+          </div>
+
+          <form onSubmit={onSubmit} className="flex flex-col gap-6">
+            <Field label="Permission Name">
+              <input value={values.name} onChange={(event) => setField("name", event.target.value)} placeholder="Medical Leave" className={fieldInputClass} />
+            </Field>
+            <Field label="Description">
+              <textarea value={values.description} onChange={(event) => setField("description", event.target.value)} placeholder="Describe this permission rule" className={`${fieldInputClass} min-h-[110px] resize-none`} />
+            </Field>
+            <Field label="Apply To">
+              <select
+                value={values.applyToType}
+                onChange={(event) => onChange((current) => ({ ...current, applyToType: event.target.value, targetValue: "" }))}
+                className={fieldInputClass}
+              >
+                <option value="employee">Şəxs</option>
+                <option value="group">Qrup</option>
+                <option value="position">Vəzifə</option>
+                <option value="department">Departament</option>
+              </select>
+            </Field>
+            <Field label="Target">
+              <SearchableSelect value={values.targetValue} onChange={(nextValue) => setField("targetValue", nextValue)} options={availableTargets} placeholder="Search target" />
+            </Field>
+
+            <div className="mt-4 flex items-center gap-3 border-t border-navy/[0.06] pt-4">
+              <button type="button" onClick={onClose} className="flex-1 rounded-xl border-2 border-navy/10 px-4 py-3 text-sm font-semibold text-navy transition hover:border-navy/20 hover:bg-surface">
+                Cancel
+              </button>
+              <button type="submit" className="flex-1 rounded-xl bg-purple px-4 py-3 text-sm font-semibold text-white shadow-purple transition hover:bg-purple/90">
+                {editing ? "Update Permission" : "Save Permission"}
               </button>
             </div>
           </form>
@@ -4957,6 +6579,100 @@ function Pagination({ currentPage, totalPages, onPageChange, summary }) {
   );
 }
 
+function AccessLogsPage({ deviceLogs, systemLogs }) {
+  const { t } = useI18n();
+  const [activeTab, setActiveTab] = useState("device");
+  const rows = activeTab === "device" ? deviceLogs : systemLogs;
+
+  return (
+    <div className="mx-auto max-w-[1480px]">
+      <div className="mb-8 flex items-start justify-between gap-6">
+        <div>
+          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-navy">
+            {t("logs.title", "Access Logs")}
+          </h1>
+          <p className="mt-1.5 text-sm font-medium text-navy/50">
+            {t("logs.subtitle", "Device-originated events and in-platform audit changes")}
+          </p>
+        </div>
+
+        <MetaChip>{rows.length} logs</MetaChip>
+      </div>
+
+      <div className="mb-4 rounded-2xl border border-navy/[0.05] bg-white p-4 shadow-sm">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setActiveTab("device")}
+            className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+              activeTab === "device"
+                ? "bg-purple text-white shadow-purple"
+                : "bg-surface text-navy hover:bg-purple/10 hover:text-purple"
+            }`}
+          >
+            {t("logs.device", "Device Logs")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("system")}
+            className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+              activeTab === "system"
+                ? "bg-purple text-white shadow-purple"
+                : "bg-surface text-navy hover:bg-purple/10 hover:text-purple"
+            }`}
+          >
+            {t("logs.system", "System Changes")}
+          </button>
+        </div>
+      </div>
+
+      <DataGrid minWidth={activeTab === "device" ? 1280 : 1180}>
+        {activeTab === "device" ? (
+          <>
+            <DataGridHeader columnsTemplate="220px 170px 190px 220px 150px 170px">
+              <span>{t("logs.columns.device", "Device")}</span>
+              <span>{t("logs.columns.area", "Area")}</span>
+              <span>{t("logs.columns.event", "Event")}</span>
+              <span>{t("logs.columns.subject", "Subject")}</span>
+              <span>{t("logs.columns.method", "Method")}</span>
+              <span>{t("logs.columns.timestamp", "Timestamp")}</span>
+            </DataGridHeader>
+            {rows.map((row) => (
+              <DataGridRow key={row.id} columnsTemplate="220px 170px 190px 220px 150px 170px">
+                <span className="font-semibold">{row.device}</span>
+                <span>{row.area}</span>
+                <span>{row.event}</span>
+                <span>{row.subject}</span>
+                <span>{row.method}</span>
+                <span>{row.timestamp}</span>
+              </DataGridRow>
+            ))}
+          </>
+        ) : (
+          <>
+            <DataGridHeader columnsTemplate="180px 250px 220px 170px 170px">
+              <span>{t("logs.columns.actor", "Actor")}</span>
+              <span>{t("logs.columns.action", "Action")}</span>
+              <span>{t("logs.columns.target", "Target")}</span>
+              <span>{t("logs.columns.module", "Module")}</span>
+              <span>{t("logs.columns.timestamp", "Timestamp")}</span>
+            </DataGridHeader>
+            {rows.map((row) => (
+              <DataGridRow key={row.id} columnsTemplate="180px 250px 220px 170px 170px">
+                <span className="font-semibold">{row.actor}</span>
+                <span>{row.action}</span>
+                <span>{row.target}</span>
+                <span>{row.module}</span>
+                <span>{row.timestamp}</span>
+              </DataGridRow>
+            ))}
+          </>
+        )}
+      </DataGrid>
+    </div>
+  );
+}
+
 function PlaceholderPage({ title }) {
   return (
     <div className="mx-auto max-w-[1180px]">
@@ -4966,6 +6682,194 @@ function PlaceholderPage({ title }) {
           This section is preserved in the current product structure and can be expanded later without changing the Devices or Employees modules.
         </p>
       </div>
+    </div>
+  );
+}
+
+function DashboardPage({ stats, recentEntries }) {
+  const { language, t } = useI18n();
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setNow(new Date());
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  const dateLabel = new Intl.DateTimeFormat(language === "az" ? "az-AZ" : language === "ru" ? "ru-RU" : "en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(now);
+
+  const timeLabel = new Intl.DateTimeFormat(language === "az" ? "az-AZ" : language === "ru" ? "ru-RU" : "en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(now);
+
+  const metricCards = [
+    {
+      key: "atWork",
+      label: t("dashboard.atWork", "Employees At Work"),
+      value: stats.atWork,
+      tone: "bg-emerald-50 text-emerald-700",
+      icon: <UsersIcon className="h-5 w-5" />,
+    },
+    {
+      key: "totalEmployees",
+      label: t("dashboard.totalEmployees", "Total Employees"),
+      value: stats.totalEmployees,
+      tone: "bg-purple/10 text-purple",
+      icon: <UsersIcon className="h-5 w-5" />,
+    },
+    {
+      key: "permissions",
+      label: t("dashboard.permissions", "Employees With Permissions"),
+      value: stats.permissions,
+      tone: "bg-yellow/20 text-yellow-700",
+      icon: <CheckIcon className="h-5 w-5" />,
+    },
+    {
+      key: "onLeave",
+      label: t("dashboard.onLeave", "On Leave"),
+      value: stats.onLeave,
+      tone: "bg-red-50 text-red-500",
+      icon: <CalendarIcon className="h-5 w-5" />,
+    },
+  ];
+
+  return (
+    <div className="mx-auto max-w-[1480px]">
+      <div className="mb-8 flex items-start justify-between gap-6">
+        <div>
+          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-navy">
+            {t("dashboard.title", "Dashboard")}
+          </h1>
+          <p className="mt-1.5 text-sm font-medium text-navy/50">
+            {t("dashboard.subtitle", "Track live HR and device metrics in one place")}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-navy/10 bg-white px-5 py-4 text-right shadow-sm">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-navy/35">
+            {t("dashboard.todayDateTime", "Today's Date & Time")}
+          </div>
+          <div className="mt-2 text-lg font-bold text-navy">{timeLabel}</div>
+          <div className="mt-1 text-sm font-medium capitalize text-navy/55">{dateLabel}</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {metricCards.map((card) => (
+          <div
+            key={card.key}
+            className="rounded-[28px] border border-navy/[0.05] bg-white p-6 shadow-sm"
+          >
+            <div className="flex items-center justify-between">
+              <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${card.tone}`}>
+                {card.icon}
+              </div>
+              <div className="text-[32px] font-bold leading-none tracking-tight text-navy">
+                {card.value}
+              </div>
+            </div>
+            <div className="mt-5 text-sm font-semibold text-navy/65">{card.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-[1.3fr_0.9fr]">
+        <div className="rounded-[28px] border border-navy/[0.05] bg-white p-7 shadow-sm">
+          <div className="mb-6 flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-bold text-navy">
+                {t("dashboard.deviceSummary", "Device Status Summary")}
+              </h2>
+              <p className="mt-1 text-sm font-medium text-navy/45">
+                {stats.totalDevices} {t("dashboard.totalDevices", "Total Devices")}
+              </p>
+            </div>
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-purple/10 text-purple">
+              <DeviceIcon className="h-6 w-6" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <DashboardMiniCard
+              label={t("dashboard.totalDevices", "Total Devices")}
+              value={stats.totalDevices}
+              tone="bg-surface text-navy"
+            />
+            <DashboardMiniCard
+              label={t("dashboard.onlineDevices", "Online Devices")}
+              value={stats.onlineDevices}
+              tone="bg-emerald-50 text-emerald-700"
+            />
+            <DashboardMiniCard
+              label={t("dashboard.offlineDevices", "Offline Devices")}
+              value={stats.offlineDevices}
+              tone="bg-red-50 text-red-500"
+            />
+          </div>
+        </div>
+
+        <div className="rounded-[28px] border border-navy/[0.05] bg-white p-7 shadow-sm">
+          <div className="mb-6 flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-bold text-navy">
+                {t("dashboard.recentEntryLogs", "Last 10 Entry Logs")}
+              </h2>
+              <p className="mt-1 text-sm font-medium text-navy/45">
+                {recentEntries.length} / 10
+              </p>
+            </div>
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-yellow/20 text-yellow-700">
+              <DoorFrameIcon className="h-6 w-6" />
+            </div>
+          </div>
+
+          <div className="max-h-[392px] space-y-3 overflow-y-auto pr-2">
+            {recentEntries.length > 0 ? (
+              recentEntries.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="flex items-center justify-between rounded-2xl bg-surface px-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-bold text-navy">{entry.fullName}</div>
+                    <div className="mt-1 text-xs font-medium text-navy/45">
+                      {entry.internalId} · {entry.date}
+                    </div>
+                  </div>
+                  <div className="ml-4 text-right">
+                    <div className="text-sm font-bold text-navy">{entry.checkIn}</div>
+                    <div className="mt-1 text-xs font-medium text-navy/45">
+                      {t(`dashboard.method.${entry.method}`, entry.method)}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-2xl bg-surface px-4 py-6 text-sm font-medium text-navy/45">
+                {t("dashboard.noEntryLogs", "No entry logs found")}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DashboardMiniCard({ label, value, tone }) {
+  return (
+    <div className={`rounded-2xl px-5 py-4 ${tone}`}>
+      <div className="text-2xl font-bold leading-none">{value}</div>
+      <div className="mt-2 text-sm font-semibold opacity-80">{label}</div>
     </div>
   );
 }
@@ -4991,12 +6895,41 @@ function SearchableSelect({
   optionLabels = {},
 }) {
   const listId = useId();
+  const wrapperRef = useRef(null);
+  const [isOpen, setIsOpen] = useState(false);
+
+  const filteredOptions = useMemo(() => {
+    const query = String(value || "").trim().toLowerCase();
+    if (!query) return options;
+    return options.filter((option) =>
+      String(optionLabels[option] || option).toLowerCase().includes(query),
+    );
+  }, [optionLabels, options, value]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (!wrapperRef.current?.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [isOpen]);
+
   return (
-    <>
+    <div ref={wrapperRef} className="relative">
       <input
         list={listId}
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        onFocus={() => setIsOpen(true)}
+        onClick={() => setIsOpen(true)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setIsOpen(false);
+        }}
         className={className}
         placeholder={placeholder}
       />
@@ -5007,7 +6940,36 @@ function SearchableSelect({
           </option>
         ))}
       </datalist>
-    </>
+      {isOpen ? (
+        <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-[80] max-h-60 overflow-auto rounded-2xl border border-navy/10 bg-white p-2 shadow-2xl">
+          {filteredOptions.length > 0 ? (
+            filteredOptions.map((option) => (
+              <button
+                key={option}
+                type="button"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  onChange(option);
+                  setIsOpen(false);
+                }}
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm font-medium transition ${
+                  value === option
+                    ? "bg-purple/10 text-purple"
+                    : "text-navy hover:bg-surface"
+                }`}
+              >
+                <span>{optionLabels[option] || option}</span>
+                {value === option ? <CheckIcon className="h-4 w-4" /> : null}
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-2.5 text-sm font-medium text-navy/40">
+              No matching options
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -5299,9 +7261,10 @@ function createEmployeeRecord(data) {
   };
 }
 
-function getEmployeeSortValue(employee, field) {
+function getEmployeeSortValue(employee, field, resolveAreaLabel) {
   if (field === "salary") return parseCurrency(employee.salary);
   if (field === "annualLeaveBalance") return parseLeadingNumber(employee.annualLeaveBalance);
+  if (field === "area") return resolveAreaLabel ? resolveAreaLabel(employee) : "";
   if (field === "employmentStartDate" || field === "contractEndDate") {
     return new Date(employee[field] || "1900-01-01").getTime();
   }
@@ -5416,8 +7379,9 @@ function TrashIcon(props) { return <IconBase {...props}><path d="M3 6h18" /><pat
 function ArrowLeftIcon(props) { return <IconBase {...props}><path d="M19 12H5" /><path d="m12 19-7-7 7-7" /></IconBase>; }
 function UploadIcon(props) { return <IconBase {...props}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M17 8l-5-5-5 5" /><path d="M12 3v12" /></IconBase>; }
 function CameraIcon(props) { return <IconBase {...props}><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></IconBase>; }
+function ClockIcon(props) { return <IconBase {...props}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></IconBase>; }
 function FingerprintIcon(props) { return <IconBase {...props}><path d="M8 13a4 4 0 0 1 8 0v1" /><path d="M12 19v-6" /><path d="M9 17c0 1.7 1.3 3 3 3s3-1.3 3-3v-2" /><path d="M6 14v-1a6 6 0 0 1 12 0v2" /></IconBase>; }
 function CardIcon(props) { return <IconBase {...props}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18" /><path d="M7 15h3" /></IconBase>; }
 function FaceIcon(props) { return <IconBase {...props}><path d="M9 3H5a2 2 0 0 0-2 2v4" /><path d="M15 3h4a2 2 0 0 1 2 2v4" /><path d="M21 15v4a2 2 0 0 1-2 2h-4" /><path d="M3 15v4a2 2 0 0 0 2 2h4" /><path d="M9 10h.01M15 10h.01" /><path d="M8 15c1.2 1 2.5 1.5 4 1.5s2.8-.5 4-1.5" /></IconBase>; }
 
-export default App;
+export default AppShellPage;
